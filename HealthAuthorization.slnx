@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/HealthAuthorization.API/HealthAuthorization.API.csproj" />
+    <Project Path="src/HealthAuthorization.Application/HealthAuthorization.Application.csproj" />
+    <Project Path="src/HealthAuthorization.Domain/HealthAuthorization.Domain.csproj" />
+    <Project Path="src/HealthAuthorization.Infrastructure/HealthAuthorization.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/HealthAuthorization.IntegrationTests/HealthAuthorization.IntegrationTests.csproj" />
+    <Project Path="tests/HealthAuthorization.UnitTests/HealthAuthorization.UnitTests.csproj" />
+  </Folder>
+</Solution>

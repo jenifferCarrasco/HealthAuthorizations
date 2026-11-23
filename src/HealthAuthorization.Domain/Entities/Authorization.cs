@@ -15,12 +15,12 @@ public sealed class Authorization : AuditableEntity, IIsActive
     public bool IsActive { get; set; } = true;
     public ICollection<AuthorizationDetail> Details { get; set; } = new List<AuthorizationDetail>();
 
-    public decimal TotalClaimedAmount => Details.Aggregate(0m,
+    public decimal TotalClaimedAmount => Details.Where(detail => !detail.IsDelete).Aggregate(0m,
         (total, detail) => CoveragePolicy.AddExact(total, detail.ClaimedAmount));
 
-    public decimal TotalArsAmount => Details.Aggregate(0m,
+    public decimal TotalArsAmount => Details.Where(detail => !detail.IsDelete).Aggregate(0m,
         (total, detail) => CoveragePolicy.AddExact(total, detail.ArsAmount));
 
-    public decimal TotalAffiliateAmount => Details.Aggregate(0m,
+    public decimal TotalAffiliateAmount => Details.Where(detail => !detail.IsDelete).Aggregate(0m,
         (total, detail) => CoveragePolicy.AddExact(total, detail.AffiliateAmount));
 }

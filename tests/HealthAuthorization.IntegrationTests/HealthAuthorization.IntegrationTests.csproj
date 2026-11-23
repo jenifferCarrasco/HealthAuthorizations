@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/HealthAuthorization.API/HealthAuthorization.API.csproj" />
+    <ProjectReference Include="../../src/HealthAuthorization.Infrastructure/HealthAuthorization.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

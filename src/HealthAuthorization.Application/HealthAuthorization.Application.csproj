@@ -8,6 +8,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../HealthAuthorization.Domain/HealthAuthorization.Domain.csproj" />
+    <PackageReference Include="MediatR" Version="12.5.0" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
   </ItemGroup>
 
 </Project>

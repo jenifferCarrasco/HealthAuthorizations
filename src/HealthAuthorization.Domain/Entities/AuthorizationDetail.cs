@@ -1,8 +1,9 @@
 using HealthAuthorization.Domain.Common.Entities;
+using HealthAuthorization.Domain.Common.Interfaces;
 
 namespace HealthAuthorization.Domain.Entities;
 
-public sealed class AuthorizationDetail : BaseEntity
+public sealed class AuthorizationDetail : BaseEntity, ISoftDelete
 {
     public Guid AuthorizationId { get; set; }
     public Authorization Authorization { get; set; } = null!;
@@ -13,4 +14,5 @@ public sealed class AuthorizationDetail : BaseEntity
     public decimal ClaimedAmount { get; set; }
     public decimal ArsAmount { get; set; }
     public decimal AffiliateAmount { get; set; }
+    public bool IsDelete { get; set; }
 }

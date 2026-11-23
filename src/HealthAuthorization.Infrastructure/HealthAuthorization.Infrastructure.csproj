@@ -9,6 +9,7 @@
   <ItemGroup>
     <ProjectReference Include="../HealthAuthorization.Application/HealthAuthorization.Application.csproj" />
     <ProjectReference Include="../HealthAuthorization.Domain/HealthAuthorization.Domain.csproj" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.15" />
   </ItemGroup>
 
 </Project>

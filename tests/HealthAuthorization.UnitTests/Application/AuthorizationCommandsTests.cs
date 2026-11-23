@@ -1,0 +1,174 @@
+using FluentValidation;
+using HealthAuthorization.Application.Common;
+using HealthAuthorization.Application.Features.Authorizations;
+using HealthAuthorization.Application.Features.Authorizations.Commands;
+using HealthAuthorization.Application.Features.Authorizations.Validators;
+using HealthAuthorization.Domain.Entities;
+
+namespace HealthAuthorization.UnitTests.Application;
+
+public sealed class AuthorizationCommandsTests
+{
+    private readonly Affiliate _affiliate = new();
+    private readonly Provider _provider = new();
+    private readonly ServiceType _serviceType = new();
+    private readonly UnitOfWorkStub _unit = new();
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task CreatesAuthorizationWithConsistentTotalsInOneSave(int count)
+    {
+        var repository = new AuthorizationRepositoryStub();
+        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+        var command = new CreateAuthorizationCommand(Input(Enumerable.Repeat(Service(100m), count).ToArray()));
+
+        Assert.True(new CreateAuthorizationCommandValidator().Validate(command).IsValid);
+        var id = await handler.Handle(command, CancellationToken.None);
+
+        var authorization = Assert.Single(repository.Items);
+        Assert.Equal(id, authorization.Id);
+        Assert.Equal(count, authorization.Details.Count);
+        Assert.Equal(100m * count, authorization.TotalClaimedAmount);
+        Assert.Equal(70m * count, authorization.TotalArsAmount);
+        Assert.Equal(30m * count, authorization.TotalAffiliateAmount);
+        Assert.All(authorization.Details, item => Assert.Equal(id, item.AuthorizationId));
+        Assert.Equal(1, _unit.SaveCount);
+    }
+
+    [Fact]
+    public void RejectsCreationWithoutServicesAndRemovalOfTheLastService()
+    {
+        var input = Input();
+        Assert.False(new CreateAuthorizationCommandValidator().Validate(new CreateAuthorizationCommand(input)).IsValid);
+        Assert.False(new UpdateAuthorizationCommandValidator().Validate(new UpdateAuthorizationCommand(Guid.NewGuid(), input)).IsValid);
+    }
+
+    [Fact]
+    public async Task DirectHandlerCallsCannotSaveAnAuthorizationWithoutServices()
+    {
+        var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
+        var existing = new Authorization { Details = { detail } };
+        var repository = new AuthorizationRepositoryStub(existing);
+        var writer = CreateWriter();
+        var create = new CreateAuthorizationCommandHandler(repository, writer, _unit);
+        var update = new UpdateAuthorizationCommandHandler(repository, writer, _unit);
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            create.Handle(new CreateAuthorizationCommand(Input()), CancellationToken.None));
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            update.Handle(new UpdateAuthorizationCommand(existing.Id, Input()), CancellationToken.None));
+
+        Assert.Same(existing, Assert.Single(repository.Items));
+        Assert.Same(detail, Assert.Single(existing.Details));
+        Assert.False(detail.IsDelete);
+        Assert.Equal(0, repository.Updates);
+        Assert.Equal(0, _unit.SaveCount);
+    }
+
+    [Theory]
+    [InlineData(-10)]
+    [InlineData(1001)]
+    public void RejectsInvalidAmounts(int thousandths)
+    {
+        var command = new CreateAuthorizationCommand(Input(Service(thousandths / 1000m)));
+        Assert.Contains(new CreateAuthorizationCommandValidator().Validate(command).Errors,
+            error => error.PropertyName.Contains(nameof(AuthorizationServiceInput.ClaimedAmount)));
+    }
+
+    [Fact]
+    public async Task RejectsUpdateWhenInactive()
+    {
+        var existing = new Authorization { IsActive = false };
+        var repository = new AuthorizationRepositoryStub(existing);
+        var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            handler.Handle(new UpdateAuthorizationCommand(existing.Id, Input(Service(100m))), CancellationToken.None));
+        Assert.Equal(0, _unit.SaveCount);
+        Assert.Equal(0, repository.Updates);
+    }
+
+    [Fact]
+    public async Task DeactivationPreservesDetailsAndCanBeRepeated()
+    {
+        var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
+        var existing = new Authorization { AffiliateId = _affiliate.Id, Details = { detail } };
+        var repository = new AuthorizationRepositoryStub(existing);
+        var handler = new DeactivateAuthorizationCommandHandler(repository, _unit);
+        var command = new DeactivateAuthorizationCommand(existing.Id);
+
+        await handler.Handle(command, CancellationToken.None);
+        await handler.Handle(command, CancellationToken.None);
+
+        Assert.False(existing.IsActive);
+        Assert.Equal(_affiliate.Id, existing.AffiliateId);
+        Assert.Same(detail, Assert.Single(existing.Details));
+        Assert.False(detail.IsDelete);
+        Assert.Equal(100m, existing.TotalClaimedAmount);
+        Assert.Equal(1, _unit.SaveCount);
+    }
+
+    [Fact]
+    public async Task InvalidUpdatesLeaveExistingDetailsAndParticipantsUnchanged()
+    {
+        var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
+        var existing = new Authorization { Details = { detail } };
+        var repository = new AuthorizationRepositoryStub(existing);
+        var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+        var input = Input(Service(150m, detail.Id), Service(100m, Guid.NewGuid()));
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            handler.Handle(new UpdateAuthorizationCommand(existing.Id, input), CancellationToken.None));
+
+        Assert.Same(detail, Assert.Single(existing.Details));
+        Assert.Equal(Guid.Empty, existing.AffiliateId);
+        Assert.Equal(100m, existing.TotalClaimedAmount);
+        Assert.False(detail.IsDelete);
+        Assert.Equal(0, _unit.SaveCount);
+        Assert.Equal(0, repository.Updates);
+    }
+
+    [Fact]
+    public async Task UpdateRetainsExistingIdsAndSoftDeletesOmittedDetails()
+    {
+        var retained = new AuthorizationDetail { ClaimedAmount = 100m };
+        var omitted = new AuthorizationDetail { ClaimedAmount = 30m };
+        var existing = new Authorization { Details = { retained, omitted } };
+        var repository = new AuthorizationRepositoryStub(existing);
+        var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+
+        await handler.Handle(new UpdateAuthorizationCommand(existing.Id,
+            Input(Service(0.05m, retained.Id), Service(10m))), CancellationToken.None);
+
+        Assert.True(omitted.IsDelete);
+        Assert.Same(retained, existing.Details.Single(detail => detail.Id == retained.Id));
+        Assert.Equal(10.05m, existing.TotalClaimedAmount);
+        Assert.Equal(7.04m, existing.TotalArsAmount);
+        Assert.Equal(3.01m, existing.TotalAffiliateAmount);
+        Assert.Equal(1, _unit.SaveCount);
+    }
+
+    [Fact]
+    public async Task RejectsUnknownProviderWithoutAddingOrSaving()
+    {
+        var repository = new AuthorizationRepositoryStub();
+        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+        var input = Input(Service(100m) with { ProviderId = Guid.NewGuid() });
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            handler.Handle(new CreateAuthorizationCommand(input), CancellationToken.None));
+
+        Assert.Empty(repository.Items);
+        Assert.Equal(0, _unit.SaveCount);
+    }
+
+    private AuthorizationInput Input(params AuthorizationServiceInput[] services) => new(_affiliate.Id, services);
+    private AuthorizationServiceInput Service(decimal amount, Guid? detailId = null) =>
+        new(_provider.Id, _serviceType.Id, amount, detailId);
+
+    private AuthorizationWriter CreateWriter() =>
+        new(new MemoryRepository<Affiliate>(_affiliate), new MemoryRepository<Contractor>(),
+            new MemoryRepository<Intermediary>(), new MemoryRepository<Provider>(_provider),
+            new MemoryRepository<ServiceType>(_serviceType));
+}

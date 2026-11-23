@@ -6,10 +6,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HealthAuthorization.Infrastructure.Persistence;
 
-public sealed class HealthAuthorizationDbContext(
-    DbContextOptions<HealthAuthorizationDbContext> options, TimeProvider clock, ICurrentUser currentUser)
-    : DbContext(options)
+public class HealthAuthorizationDbContext : DbContext
 {
+    private readonly TimeProvider _clock;
+    private readonly ICurrentUser _currentUser;
+
+    public HealthAuthorizationDbContext(DbContextOptions<HealthAuthorizationDbContext> options,
+        TimeProvider clock, ICurrentUser currentUser) : base(options)
+    {
+        _clock = clock;
+        _currentUser = currentUser;
+    }
+
     public DbSet<Affiliate> Affiliates => Set<Affiliate>();
     public DbSet<Contractor> Contractors => Set<Contractor>();
     public DbSet<Intermediary> Intermediaries => Set<Intermediary>();
@@ -60,8 +68,8 @@ public sealed class HealthAuthorizationDbContext(
             entry.Property(nameof(ISoftDelete.IsDelete)).IsModified = true;
         }
 
-        var now = clock.GetUtcNow();
-        var userId = currentUser.UserId;
+        var now = _clock.GetUtcNow();
+        var userId = _currentUser.UserId;
         foreach (var entry in ChangeTracker.Entries<IAuditable>())
         {
             if (entry.State == EntityState.Added)

@@ -3,7 +3,7 @@ using HealthAuthorization.Application.Features.Authorizations.Commands;
 
 namespace HealthAuthorization.Application.Features.Authorizations.Validators;
 
-public sealed class UpdateAuthorizationCommandValidator : AbstractValidator<UpdateAuthorizationCommand>
+public class UpdateAuthorizationCommandValidator : AbstractValidator<UpdateAuthorizationCommand>
 {
     public UpdateAuthorizationCommandValidator()
     {

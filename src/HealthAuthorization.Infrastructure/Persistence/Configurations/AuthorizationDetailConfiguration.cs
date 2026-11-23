@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace HealthAuthorization.Infrastructure.Persistence.Configurations;
 
-internal sealed class AuthorizationDetailConfiguration : IEntityTypeConfiguration<AuthorizationDetail>
+internal class AuthorizationDetailConfiguration : IEntityTypeConfiguration<AuthorizationDetail>
 {
     public void Configure(EntityTypeBuilder<AuthorizationDetail> builder)
     {

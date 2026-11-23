@@ -6,11 +6,23 @@ using HealthAuthorization.Domain.Policies;
 
 namespace HealthAuthorization.Application.Features.Authorizations;
 
-public sealed class AuthorizationWriter(
-    IRepositoryAsync<Affiliate> affiliates, IRepositoryAsync<Contractor> contractors,
-    IRepositoryAsync<Intermediary> intermediaries, IRepositoryAsync<Provider> providers,
-    IRepositoryAsync<ServiceType> serviceTypes)
+public class AuthorizationWriter
 {
+    private readonly IRepositoryAsync<Affiliate> _affiliates;
+    private readonly IRepositoryAsync<Contractor> _contractors;
+    private readonly IRepositoryAsync<Intermediary> _intermediaries;
+    private readonly IRepositoryAsync<Provider> _providers;
+    private readonly IRepositoryAsync<ServiceType> _serviceTypes;
+
+    public AuthorizationWriter(IRepositoryAsync<Affiliate> affiliates, IRepositoryAsync<Contractor> contractors, IRepositoryAsync<Intermediary> intermediaries, IRepositoryAsync<Provider> providers, IRepositoryAsync<ServiceType> serviceTypes)
+    {
+        _affiliates = affiliates;
+        _contractors = contractors;
+        _intermediaries = intermediaries;
+        _providers = providers;
+        _serviceTypes = serviceTypes;
+    }
+
     internal async Task ApplyAsync(Authorization authorization, AuthorizationInput input, CancellationToken cancellationToken)
     {
         if (!authorization.IsActive)
@@ -23,32 +35,22 @@ public sealed class AuthorizationWriter(
             throw new ValidationException("La autorización debe contener al menos un servicio.");
         }
 
-        if (!await affiliates.ExistsAsync(input.AffiliateId, cancellationToken))
+        if (input.AffiliateId == Guid.Empty || (authorization.AffiliateId != input.AffiliateId &&
+            !await _affiliates.ExistsAsync(input.AffiliateId, cancellationToken)))
         {
             throw new NotFoundException("El afiliado no existe.");
         }
 
-        if (input.ContractorId is Guid contractorId && !await contractors.ExistsAsync(contractorId, cancellationToken))
+        if (input.ContractorId is Guid contractorId && contractorId != authorization.ContractorId &&
+            !await _contractors.ExistsAsync(contractorId, cancellationToken))
         {
             throw new NotFoundException("El contratante no existe.");
         }
 
-        if (input.IntermediaryId is Guid intermediaryId &&
-            !await intermediaries.ExistsAsync(intermediaryId, cancellationToken))
+        if (input.IntermediaryId is Guid intermediaryId && intermediaryId != authorization.IntermediaryId &&
+            !await _intermediaries.ExistsAsync(intermediaryId, cancellationToken))
         {
             throw new NotFoundException("El intermediario no existe.");
-        }
-
-        var providerIds = input.Services.Select(service => service.ProviderId).Distinct().ToArray();
-        if (!await providers.ExistAllAsync(providerIds, cancellationToken))
-        {
-            throw new NotFoundException("Uno o más prestadores no existen.");
-        }
-
-        var serviceTypeIds = input.Services.Select(service => service.ServiceTypeId).Distinct().ToArray();
-        if (!await serviceTypes.ExistAllAsync(serviceTypeIds, cancellationToken))
-        {
-            throw new NotFoundException("Uno o más tipos de servicio no existen.");
         }
 
         var existing = authorization.Details.Where(detail => !detail.IsDelete).ToDictionary(detail => detail.Id);
@@ -71,6 +73,20 @@ public sealed class AuthorizationWriter(
                 ArsAmount = arsAmount,
                 AffiliateAmount = affiliateAmount
             }));
+        }
+
+        var providerIds = planned.Where(change => change.Existing?.ProviderId != change.Values.ProviderId)
+            .Select(change => change.Values.ProviderId).Distinct().ToArray();
+        if (!await _providers.ExistAllAsync(providerIds, cancellationToken))
+        {
+            throw new NotFoundException("Uno o más prestadores no existen.");
+        }
+
+        var serviceTypeIds = planned.Where(change => change.Existing?.ServiceTypeId != change.Values.ServiceTypeId)
+            .Select(change => change.Values.ServiceTypeId).Distinct().ToArray();
+        if (!await _serviceTypes.ExistAllAsync(serviceTypeIds, cancellationToken))
+        {
+            throw new NotFoundException("Uno o más tipos de servicio no existen.");
         }
 
         var candidate = new Authorization { Details = planned.Select(change => change.Values).ToList() };

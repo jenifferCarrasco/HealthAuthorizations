@@ -9,16 +9,16 @@ namespace HealthAuthorization.UnitTests.Application;
 
 public sealed class AffiliateCommandsTests
 {
-    private static readonly AffiliateInput ValidInput = new("AF-123", "Ana", "Pérez", new DateOnly(2010, 1, 1));
+    private static AffiliateInput NewInput() => new("AF-123", "Ana", "Pérez", new DateOnly(2010, 1, 1));
 
     [Fact]
     public async Task CreatesAffiliateAndNormalizesIdentification()
     {
         var contractor = new Contractor();
-        var affiliates = new AffiliateRepositoryStub();
+        var affiliates = new MemoryRepository<Affiliate>();
         var unit = new UnitOfWorkStub();
         var handler = new CreateAffiliateCommandHandler(affiliates, new MemoryRepository<Contractor>(contractor), unit);
-        var command = new CreateAffiliateCommand(ValidInput with
+        var command = new CreateAffiliateCommand(new AffiliateInput("AF-123", "Ana", "Pérez", new DateOnly(2010, 1, 1))
         {
             Identification = "  001-1234567-8  ", DocumentType = DocumentType.Cedula, ContractorId = contractor.Id
         });
@@ -35,7 +35,7 @@ public sealed class AffiliateCommandsTests
     [Fact]
     public void RejectsEmptyNumbersAndFutureBirthDates()
     {
-        var command = new CreateAffiliateCommand(ValidInput with
+        var command = new CreateAffiliateCommand(new AffiliateInput("AF-123", "Ana", "Pérez", new DateOnly(2010, 1, 1))
         {
             AffiliateNumber = " ", BirthDate = new DateOnly(2026, 11, 24)
         });
@@ -55,19 +55,19 @@ public sealed class AffiliateCommandsTests
     [InlineData("001", (DocumentType)9, false)]
     public void ValidatesIdentificationAndTypeTogether(string? identification, DocumentType documentType, bool isValid)
     {
-        var command = new CreateAffiliateCommand(ValidInput with { Identification = identification, DocumentType = documentType });
+        var command = new CreateAffiliateCommand(new AffiliateInput("AF-123", "Ana", "Pérez", new DateOnly(2010, 1, 1)) { Identification = identification, DocumentType = documentType });
         Assert.Equal(isValid, new CreateAffiliateCommandValidator(new FixedClock()).Validate(command).IsValid);
     }
 
     [Fact]
-    public async Task RejectsDuplicatesBeforeAddingOrSaving()
+    public async Task ReservesAffiliateNumberAfterLogicalDeletion()
     {
-        var existing = new Affiliate { AffiliateNumber = "AF-123" };
-        var affiliates = new AffiliateRepositoryStub(existing);
+        var existing = new Affiliate { AffiliateNumber = "AF-123", IsDelete = true };
+        var affiliates = new MemoryRepository<Affiliate>(existing);
         var unit = new UnitOfWorkStub();
         var handler = new CreateAffiliateCommandHandler(affiliates, new MemoryRepository<Contractor>(), unit);
 
-        await Assert.ThrowsAsync<ConflictException>(() => handler.Handle(new CreateAffiliateCommand(ValidInput), TestContextToken));
+        await Assert.ThrowsAsync<ConflictException>(() => handler.Handle(new CreateAffiliateCommand(NewInput()), TestContextToken));
         Assert.Same(existing, Assert.Single(affiliates.Items));
         Assert.Equal(0, unit.SaveCount);
     }
@@ -76,10 +76,10 @@ public sealed class AffiliateCommandsTests
     public async Task UpdateCanKeepItsOwnUniqueValues()
     {
         var existing = new Affiliate { AffiliateNumber = "AF-123", Identification = "001" };
-        var affiliates = new AffiliateRepositoryStub(existing);
+        var affiliates = new MemoryRepository<Affiliate>(existing);
         var unit = new UnitOfWorkStub();
         var handler = new UpdateAffiliateCommandHandler(affiliates, new MemoryRepository<Contractor>(), unit);
-        var input = ValidInput with { Identification = "001", DocumentType = DocumentType.Cedula };
+        var input = new AffiliateInput("AF-123", "Ana", "Pérez", new DateOnly(2010, 1, 1)) { Identification = "001", DocumentType = DocumentType.Cedula };
 
         await handler.Handle(new UpdateAffiliateCommand(existing.Id, input), TestContextToken);
 

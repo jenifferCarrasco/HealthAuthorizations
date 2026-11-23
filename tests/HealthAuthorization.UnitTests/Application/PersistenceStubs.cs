@@ -1,48 +1,49 @@
+using System.Linq.Expressions;
+using HealthAuthorization.Domain.Common.Interfaces;
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
-using HealthAuthorization.Application.Features.Affiliates;
-using HealthAuthorization.Application.Features.Authorizations;
 using HealthAuthorization.Domain.Common.Entities;
-using HealthAuthorization.Domain.Entities;
 
 namespace HealthAuthorization.UnitTests.Application;
 
-internal class MemoryRepository<TEntity>(params TEntity[] items) : IRepositoryAsync<TEntity> where TEntity : BaseEntity
+internal sealed class MemoryRepository<TEntity> : IRepositoryAsync<TEntity> where TEntity : BaseEntity
 {
-    public List<TEntity> Items { get; } = [.. items];
+    public MemoryRepository(params TEntity[] items) => Items = [.. items];
+
+    public List<TEntity> Items { get; }
+    private IEnumerable<TEntity> Visible => Items.Where(item => item is not ISoftDelete { IsDelete: true });
+
+    public Task<bool> AnyAsync(Expression<Func<TEntity, bool>> predicate, bool includeDeleted,
+        CancellationToken cancellationToken) =>
+        Task.FromResult((includeDeleted ? Items : Visible).Any(predicate.Compile()));
+
+    public Task<TResult?> FindAsync<TResult>(Guid id, Expression<Func<TEntity, TResult>> projection,
+        CancellationToken cancellationToken) where TResult : class =>
+        Task.FromResult(Visible.Where(item => item.Id == id).Select(projection.Compile()).SingleOrDefault());
+
+    public Task<Page<TResult>> ListAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
+        Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>> order, Expression<Func<TEntity, TResult>> projection,
+        int pageNumber, int pageSize, CancellationToken cancellationToken)
+    {
+        var query = Visible.AsQueryable().Where(predicate);
+        var page = order(query).Skip((pageNumber - 1) * pageSize).Take(pageSize).Select(projection).ToList();
+        return Task.FromResult(new Page<TResult>(page, pageNumber, pageSize, query.LongCount()));
+    }
+
+    public Task<TEntity?> GetForUpdateAsync(Guid id, Expression<Func<TEntity, object>> include,
+        CancellationToken cancellationToken) => GetForUpdateAsync(id, cancellationToken);
+
     public int Updates { get; private set; }
 
     public Task<TEntity?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
-        Task.FromResult(Items.SingleOrDefault(item => item.Id == id));
+        Task.FromResult(Visible.SingleOrDefault(item => item.Id == id));
     public Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken) =>
-        Task.FromResult(Items.Any(item => item.Id == id));
+        Task.FromResult(Visible.Any(item => item.Id == id));
     public Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
-        Task.FromResult(ids.All(id => Items.Any(item => item.Id == id)));
+        Task.FromResult(ids.All(id => Visible.Any(item => item.Id == id)));
 
     public void Add(TEntity entity) => Items.Add(entity);
-    public void Update(TEntity entity) => Updates++;
-}
-
-internal sealed class AffiliateRepositoryStub(params Affiliate[] items) : MemoryRepository<Affiliate>(items), IAffiliateRepository
-{
-    public Task<bool> NumberExistsAsync(string number, Guid? excludedId, CancellationToken cancellationToken) =>
-        Task.FromResult(Items.Any(item => item.Id != excludedId && item.AffiliateNumber == number));
-
-    public Task<bool> IdentificationExistsAsync(string identification, Guid? excludedId, CancellationToken cancellationToken) =>
-        Task.FromResult(Items.Any(item => item.Id != excludedId && item.Identification == identification));
-
-    public Task<AffiliateDto?> GetAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<Page<AffiliateDto>> ListAsync(string? search, int pageNumber, int pageSize, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
-}
-
-internal sealed class AuthorizationRepositoryStub(params Authorization[] items)
-    : MemoryRepository<Authorization>(items), IAuthorizationRepository
-{
-    public Task<AuthorizationDto?> GetAsync(Guid id, CancellationToken cancellationToken) => throw new NotSupportedException();
-    public Task<Page<AuthorizationSummaryDto>> ListAsync(
-        AuthorizationFilters filters, int pageNumber, int pageSize, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+    public void Update(TEntity entity, bool forceWrite = false) => Updates++;
 }
 
 internal sealed class UnitOfWorkStub : IUnitOfWork

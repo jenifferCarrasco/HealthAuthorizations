@@ -5,13 +5,20 @@ using Microsoft.EntityFrameworkCore;
 
 namespace HealthAuthorization.Infrastructure.Persistence;
 
-internal sealed class UnitOfWork(HealthAuthorizationDbContext context) : IUnitOfWork
+internal class UnitOfWork : IUnitOfWork
 {
+    private readonly HealthAuthorizationDbContext _context;
+
+    public UnitOfWork(HealthAuthorizationDbContext context)
+    {
+        _context = context;
+    }
+
     public async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            return await context.SaveChangesAsync(cancellationToken);
+            return await _context.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException exception)
         {

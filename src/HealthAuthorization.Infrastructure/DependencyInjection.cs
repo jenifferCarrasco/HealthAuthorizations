@@ -1,6 +1,4 @@
 using HealthAuthorization.Application.Abstractions;
-using HealthAuthorization.Application.Features.Affiliates;
-using HealthAuthorization.Application.Features.Authorizations;
 using HealthAuthorization.Infrastructure.Persistence;
 using HealthAuthorization.Infrastructure.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
@@ -19,12 +17,10 @@ public static class DependencyInjection
         services.AddDbContext<HealthAuthorizationDbContext>(options => options.UseSqlServer(connectionString));
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped(typeof(IRepositoryAsync<>), typeof(EfRepository<>));
-        services.AddScoped<IAffiliateRepository, AffiliateRepository>();
-        services.AddScoped<IAuthorizationRepository, AuthorizationRepository>();
         return services;
     }
 
-    private sealed class AnonymousCurrentUser : ICurrentUser
+    private class AnonymousCurrentUser : ICurrentUser
     {
         public Guid? UserId => null;
     }

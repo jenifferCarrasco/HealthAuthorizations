@@ -1,6 +1,20 @@
 namespace HealthAuthorization.Application.Common;
 
-public sealed record Page<T>(IReadOnlyList<T> Items, int PageNumber, int PageSize, long TotalCount);
+public class Page<T>
+{
+    public IReadOnlyList<T> Items { get; set; }
+    public int PageNumber { get; set; }
+    public int PageSize { get; set; }
+    public long TotalCount { get; set; }
+
+    public Page(IReadOnlyList<T> Items, int PageNumber, int PageSize, long TotalCount)
+    {
+        this.Items = Items;
+        this.PageNumber = PageNumber;
+        this.PageSize = PageSize;
+        this.TotalCount = TotalCount;
+    }
+}
 
 public static class InputLimits
 {
@@ -13,17 +27,18 @@ public static class InputLimits
     public static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    public static void ValidatePage(int pageNumber, int pageSize)
+}
+
+public class NotFoundException : Exception
+{
+    public NotFoundException(string message) : base(message)
     {
-        if (pageNumber < 1 || pageSize is < 1 or > MaxPageSize ||
-            (long)(pageNumber - 1) * pageSize > int.MaxValue)
-        {
-            throw new ArgumentOutOfRangeException(nameof(pageNumber), "La paginación solicitada no es válida.");
-        }
     }
 }
 
-public sealed class NotFoundException(string message) : Exception(message);
-
-public sealed class ConflictException(string message, Exception? innerException = null)
-    : Exception(message, innerException);
+public class ConflictException : Exception
+{
+    public ConflictException(string message, Exception? innerException = null) : base(message, innerException)
+    {
+    }
+}

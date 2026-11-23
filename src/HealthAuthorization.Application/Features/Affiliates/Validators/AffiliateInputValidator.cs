@@ -4,7 +4,7 @@ using HealthAuthorization.Domain.Enums;
 
 namespace HealthAuthorization.Application.Features.Affiliates.Validators;
 
-internal sealed class AffiliateInputValidator : AbstractValidator<AffiliateInput>
+internal class AffiliateInputValidator : AbstractValidator<AffiliateInput>
 {
     public AffiliateInputValidator(TimeProvider clock)
     {

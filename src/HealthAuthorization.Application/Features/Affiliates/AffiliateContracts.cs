@@ -1,22 +1,51 @@
-using HealthAuthorization.Application.Abstractions;
-using HealthAuthorization.Application.Common;
-using HealthAuthorization.Domain.Entities;
 using HealthAuthorization.Domain.Enums;
 
 namespace HealthAuthorization.Application.Features.Affiliates;
 
-public sealed record AffiliateInput(
-    string AffiliateNumber, string FirstName, string LastName, DateOnly BirthDate,
-    string? Identification = null, DocumentType DocumentType = DocumentType.None, Guid? ContractorId = null);
-
-public sealed record AffiliateDto(
-    Guid Id, string AffiliateNumber, string FirstName, string LastName, DateOnly BirthDate,
-    string? Identification, DocumentType DocumentType, Guid? ContractorId);
-
-public interface IAffiliateRepository : IRepositoryAsync<Affiliate>
+public class AffiliateInput
 {
-    Task<bool> NumberExistsAsync(string number, Guid? excludedId, CancellationToken cancellationToken);
-    Task<bool> IdentificationExistsAsync(string identification, Guid? excludedId, CancellationToken cancellationToken);
-    Task<AffiliateDto?> GetAsync(Guid id, CancellationToken cancellationToken);
-    Task<Page<AffiliateDto>> ListAsync(string? search, int pageNumber, int pageSize, CancellationToken cancellationToken);
+    public string AffiliateNumber { get; set; }
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public DateOnly BirthDate { get; set; }
+    public string? Identification { get; set; }
+    public DocumentType DocumentType { get; set; }
+    public Guid? ContractorId { get; set; }
+
+    public AffiliateInput(string AffiliateNumber, string FirstName, string LastName, DateOnly BirthDate, string? Identification = null, DocumentType DocumentType = DocumentType.None, Guid? ContractorId = null)
+    {
+        this.AffiliateNumber = AffiliateNumber;
+        this.FirstName = FirstName;
+        this.LastName = LastName;
+        this.BirthDate = BirthDate;
+        this.Identification = Identification;
+        this.DocumentType = DocumentType;
+        this.ContractorId = ContractorId;
+    }
+}
+
+public class AffiliateDto
+{
+    public Guid Id { get; set; }
+    public string AffiliateNumber { get; set; }
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
+    public DateOnly BirthDate { get; set; }
+    public string? Identification { get; set; }
+    public DocumentType DocumentType { get; set; }
+    public Guid? ContractorId { get; set; }
+    public bool IsActive { get; set; }
+
+    public AffiliateDto(Guid Id, string AffiliateNumber, string FirstName, string LastName, DateOnly BirthDate, string? Identification, DocumentType DocumentType, Guid? ContractorId, bool IsActive)
+    {
+        this.Id = Id;
+        this.AffiliateNumber = AffiliateNumber;
+        this.FirstName = FirstName;
+        this.LastName = LastName;
+        this.BirthDate = BirthDate;
+        this.Identification = Identification;
+        this.DocumentType = DocumentType;
+        this.ContractorId = ContractorId;
+        this.IsActive = IsActive;
+    }
 }

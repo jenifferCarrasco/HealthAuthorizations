@@ -3,7 +3,7 @@ using HealthAuthorization.Application.Features.Affiliates.Commands;
 
 namespace HealthAuthorization.Application.Features.Affiliates.Validators;
 
-public sealed class UpdateAffiliateCommandValidator : AbstractValidator<UpdateAffiliateCommand>
+public class UpdateAffiliateCommandValidator : AbstractValidator<UpdateAffiliateCommand>
 {
     public UpdateAffiliateCommandValidator(TimeProvider clock)
     {

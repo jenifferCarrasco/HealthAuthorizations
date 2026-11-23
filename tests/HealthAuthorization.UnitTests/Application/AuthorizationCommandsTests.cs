@@ -19,7 +19,7 @@ public sealed class AuthorizationCommandsTests
     [InlineData(2)]
     public async Task CreatesAuthorizationWithConsistentTotalsInOneSave(int count)
     {
-        var repository = new AuthorizationRepositoryStub();
+        var repository = new MemoryRepository<Authorization>();
         var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
         var command = new CreateAuthorizationCommand(Input(Enumerable.Repeat(Service(100m), count).ToArray()));
 
@@ -49,7 +49,7 @@ public sealed class AuthorizationCommandsTests
     {
         var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
         var existing = new Authorization { Details = { detail } };
-        var repository = new AuthorizationRepositoryStub(existing);
+        var repository = new MemoryRepository<Authorization>(existing);
         var writer = CreateWriter();
         var create = new CreateAuthorizationCommandHandler(repository, writer, _unit);
         var update = new UpdateAuthorizationCommandHandler(repository, writer, _unit);
@@ -80,7 +80,7 @@ public sealed class AuthorizationCommandsTests
     public async Task RejectsUpdateWhenInactive()
     {
         var existing = new Authorization { IsActive = false };
-        var repository = new AuthorizationRepositoryStub(existing);
+        var repository = new MemoryRepository<Authorization>(existing);
         var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
 
         await Assert.ThrowsAsync<ConflictException>(() =>
@@ -94,9 +94,9 @@ public sealed class AuthorizationCommandsTests
     {
         var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
         var existing = new Authorization { AffiliateId = _affiliate.Id, Details = { detail } };
-        var repository = new AuthorizationRepositoryStub(existing);
-        var handler = new DeactivateAuthorizationCommandHandler(repository, _unit);
-        var command = new DeactivateAuthorizationCommand(existing.Id);
+        var repository = new MemoryRepository<Authorization>(existing);
+        var handler = new ChangeAuthorizationStatusCommandHandler(repository, _unit, new TestReactivationPolicy(false));
+        var command = new ChangeAuthorizationStatusCommand(existing.Id, false);
 
         await handler.Handle(command, CancellationToken.None);
         await handler.Handle(command, CancellationToken.None);
@@ -114,7 +114,7 @@ public sealed class AuthorizationCommandsTests
     {
         var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
         var existing = new Authorization { Details = { detail } };
-        var repository = new AuthorizationRepositoryStub(existing);
+        var repository = new MemoryRepository<Authorization>(existing);
         var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
         var input = Input(Service(150m, detail.Id), Service(100m, Guid.NewGuid()));
 
@@ -135,7 +135,7 @@ public sealed class AuthorizationCommandsTests
         var retained = new AuthorizationDetail { ClaimedAmount = 100m };
         var omitted = new AuthorizationDetail { ClaimedAmount = 30m };
         var existing = new Authorization { Details = { retained, omitted } };
-        var repository = new AuthorizationRepositoryStub(existing);
+        var repository = new MemoryRepository<Authorization>(existing);
         var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
 
         await handler.Handle(new UpdateAuthorizationCommand(existing.Id,
@@ -150,11 +150,28 @@ public sealed class AuthorizationCommandsTests
     }
 
     [Fact]
+    public async Task UpdateCanRetainADeletedCatalogReference()
+    {
+        _provider.IsDelete = true;
+        var detail = new AuthorizationDetail { ProviderId = _provider.Id, ServiceTypeId = _serviceType.Id };
+        var existing = new Authorization { AffiliateId = _affiliate.Id, Details = { detail } };
+        var repository = new MemoryRepository<Authorization>(existing);
+        var handler = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+
+        await handler.Handle(new UpdateAuthorizationCommand(existing.Id, Input(Service(25m, detail.Id))),
+            CancellationToken.None);
+
+        Assert.Equal(_provider.Id, detail.ProviderId);
+        Assert.Equal(25m, existing.TotalClaimedAmount);
+        Assert.Equal(1, _unit.SaveCount);
+    }
+
+    [Fact]
     public async Task RejectsUnknownProviderWithoutAddingOrSaving()
     {
-        var repository = new AuthorizationRepositoryStub();
+        var repository = new MemoryRepository<Authorization>();
         var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
-        var input = Input(Service(100m) with { ProviderId = Guid.NewGuid() });
+        var input = Input(new AuthorizationServiceInput(Guid.NewGuid(), _serviceType.Id, 100m));
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
             handler.Handle(new CreateAuthorizationCommand(input), CancellationToken.None));
@@ -171,4 +188,38 @@ public sealed class AuthorizationCommandsTests
         new(new MemoryRepository<Affiliate>(_affiliate), new MemoryRepository<Contractor>(),
             new MemoryRepository<Intermediary>(), new MemoryRepository<Provider>(_provider),
             new MemoryRepository<ServiceType>(_serviceType));
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReactivationUsesBusinessPolicyAndPreservesDetails(bool allowed)
+    {
+        var authorization = new Authorization { IsActive = false };
+        authorization.Details.Add(new AuthorizationDetail { ClaimedAmount = 100m });
+        var repository = new MemoryRepository<Authorization>(authorization);
+        var handler = new ChangeAuthorizationStatusCommandHandler(repository, _unit, new TestReactivationPolicy(allowed));
+        var command = new ChangeAuthorizationStatusCommand(authorization.Id, true);
+
+        if (allowed)
+        {
+            await handler.Handle(command, CancellationToken.None);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<ConflictException>(() => handler.Handle(command, CancellationToken.None));
+        }
+
+        Assert.Equal(allowed, authorization.IsActive);
+        Assert.Equal(100m, authorization.TotalClaimedAmount);
+        Assert.Equal(allowed ? 1 : 0, _unit.SaveCount);
+    }
+
+    private sealed class TestReactivationPolicy : IAuthorizationReactivationPolicy
+    {
+        private readonly bool _allowed;
+
+        public TestReactivationPolicy(bool allowed) => _allowed = allowed;
+
+        public bool CanReactivate(Authorization authorization) => _allowed;
+    }
 }

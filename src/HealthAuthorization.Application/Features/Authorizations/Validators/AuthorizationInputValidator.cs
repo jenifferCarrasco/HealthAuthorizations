@@ -3,7 +3,7 @@ using HealthAuthorization.Application.Common;
 
 namespace HealthAuthorization.Application.Features.Authorizations.Validators;
 
-internal sealed class AuthorizationInputValidator : AbstractValidator<AuthorizationInput>
+internal class AuthorizationInputValidator : AbstractValidator<AuthorizationInput>
 {
     public AuthorizationInputValidator(bool isCreation)
     {

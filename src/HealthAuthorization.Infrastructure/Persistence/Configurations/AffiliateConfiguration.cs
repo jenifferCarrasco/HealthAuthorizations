@@ -6,10 +6,12 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace HealthAuthorization.Infrastructure.Persistence.Configurations;
 
-internal sealed class AffiliateConfiguration : IEntityTypeConfiguration<Affiliate>
+internal class AffiliateConfiguration : IEntityTypeConfiguration<Affiliate>
 {
     public void Configure(EntityTypeBuilder<Affiliate> builder)
     {
+        builder.Property(entity => entity.IsActive).HasDefaultValue(true).HasSentinel(true);
+        builder.Property(entity => entity.IsDelete).HasDefaultValue(false).IsConcurrencyToken();
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).ValueGeneratedNever();
         builder.ToTable("Affiliates", table => table.HasCheckConstraint("CK_Affiliates_Document",
@@ -29,7 +31,7 @@ internal sealed class AffiliateConfiguration : IEntityTypeConfiguration<Affiliat
         {
             Id = CatalogSeed.AffiliateId, AffiliateNumber = "DEMO-001", FirstName = "Afiliado",
             LastName = "Demostración", BirthDate = new DateOnly(1990, 1, 1), DocumentType = DocumentType.None,
-            ContractorId = CatalogSeed.ContractorId, CreatedDate = CatalogSeed.CreatedDate
+            ContractorId = CatalogSeed.ContractorId, IsActive = true, CreatedDate = CatalogSeed.CreatedDate
         });
     }
 }

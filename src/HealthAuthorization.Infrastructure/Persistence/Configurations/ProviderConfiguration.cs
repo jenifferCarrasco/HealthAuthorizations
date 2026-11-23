@@ -5,10 +5,12 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace HealthAuthorization.Infrastructure.Persistence.Configurations;
 
-internal sealed class ProviderConfiguration : IEntityTypeConfiguration<Provider>
+internal class ProviderConfiguration : IEntityTypeConfiguration<Provider>
 {
     public void Configure(EntityTypeBuilder<Provider> builder)
     {
+        builder.Property(entity => entity.IsActive).HasDefaultValue(true).HasSentinel(true);
+        builder.Property(entity => entity.IsDelete).HasDefaultValue(false).IsConcurrencyToken();
         builder.HasKey(entity => entity.Id);
         builder.Property(entity => entity.Id).ValueGeneratedNever();
         builder.Property(entity => entity.Name).IsRequired().HasMaxLength(InputLimits.Name);
@@ -19,7 +21,7 @@ internal sealed class ProviderConfiguration : IEntityTypeConfiguration<Provider>
         {
             Id = CatalogSeed.Id(100 + type.Number), Name = $"Prestador de demostración ({type.Name})",
             Identification = $"DEMO-PROVIDER-{type.Number}", ProviderTypeId = CatalogSeed.Id(type.Number),
-            CreatedDate = CatalogSeed.CreatedDate
+            IsActive = true, CreatedDate = CatalogSeed.CreatedDate
         }));
     }
 }

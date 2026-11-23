@@ -7,24 +7,24 @@ namespace HealthAuthorization.Application.Features.Affiliates;
 internal static class AffiliateWriter
 {
     internal static async Task ApplyAsync(
-        Affiliate affiliate, AffiliateInput input, Guid? excludedId, IAffiliateRepository affiliates,
+        Affiliate affiliate, AffiliateInput input, Guid? excludedId, IRepositoryAsync<Affiliate> affiliates,
         IRepositoryAsync<Contractor> contractors, CancellationToken cancellationToken)
     {
         var number = input.AffiliateNumber.Trim();
         var identification = InputLimits.NormalizeOptional(input.Identification);
-        if (input.ContractorId is Guid contractorId &&
+        if (input.ContractorId is Guid contractorId && contractorId != affiliate.ContractorId &&
             !await contractors.ExistsAsync(contractorId, cancellationToken))
         {
             throw new NotFoundException("El contratante no existe.");
         }
 
-        if (await affiliates.NumberExistsAsync(number, excludedId, cancellationToken))
+        if (await affiliates.AnyAsync(item => item.Id != excludedId && item.AffiliateNumber == number, true, cancellationToken))
         {
             throw new ConflictException("El número de afiliado ya existe.");
         }
 
         if (identification is not null &&
-            await affiliates.IdentificationExistsAsync(identification, excludedId, cancellationToken))
+            await affiliates.AnyAsync(item => item.Id != excludedId && item.Identification == identification, true, cancellationToken))
         {
             throw new ConflictException("La identificación ya existe.");
         }

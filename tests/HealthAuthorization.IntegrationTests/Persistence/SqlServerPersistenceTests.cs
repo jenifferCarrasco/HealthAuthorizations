@@ -49,6 +49,7 @@ public sealed class SqlServerPersistenceTests
         Assert.Contains("WHERE", includedDetailsSql);
         Assert.Contains("[IsDelete]", detailSql);
         Assert.DoesNotContain("WHERE", authorizationSql);
+        Assert.Contains("[IsDelete]", context.Affiliates.ToQueryString());
 
         var authorizationEntity = context.Model.FindEntityType(typeof(Authorization))!;
         Assert.True(authorizationEntity.FindProperty("RowVersion")!.IsConcurrencyToken);
@@ -112,7 +113,7 @@ public sealed class SqlServerPersistenceTests
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<HealthAuthorizationDbContext>();
-        var repository = scope.ServiceProvider.GetRequiredService<IAuthorizationRepository>();
+        var repository = scope.ServiceProvider.GetRequiredService<IRepositoryAsync<Authorization>>();
         var unit = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var authorization = new Authorization { AffiliateId = Guid.NewGuid() };
         var removed = new AuthorizationDetail { AuthorizationId = authorization.Id };
@@ -124,7 +125,7 @@ public sealed class SqlServerPersistenceTests
         removed.IsDelete = true;
         var added = new AuthorizationDetail { AuthorizationId = authorization.Id };
         authorization.Details.Add(added);
-        repository.Update(authorization);
+        repository.Update(authorization, forceWrite: true);
         await unit.SaveChangesAsync();
 
         Assert.Equal(EntityState.Modified, context.Entry(authorization).State);

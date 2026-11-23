@@ -1,22 +1,19 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using HealthAuthorization.Application.Common.Models;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
 namespace HealthAuthorization.Application.Features.Authorizations.Queries;
 
-public class GetAuthorizationsQuery : IRequest<Page<AuthorizationSummaryDto>>
+public class GetAuthorizationsQuery : PaginationFilter, IRequest<Page<AuthorizationSummaryDto>>
 {
-    public AuthorizationFilters? Filters { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
-
-    public GetAuthorizationsQuery(AuthorizationFilters? Filters = null, int PageNumber = 1, int PageSize = 20)
-    {
-        this.Filters = Filters;
-        this.PageNumber = PageNumber;
-        this.PageSize = PageSize;
-    }
+    public Guid? AffiliateId { get; set; }
+    public Guid? ContractorId { get; set; }
+    public Guid? IntermediaryId { get; set; }
+    public bool? IsActive { get; set; }
+    public DateTimeOffset? CreatedFrom { get; set; }
+    public DateTimeOffset? CreatedBefore { get; set; }
 }
 
 public class GetAuthorizationsQueryHandler : IRequestHandler<GetAuthorizationsQuery, Page<AuthorizationSummaryDto>>
@@ -30,14 +27,13 @@ public class GetAuthorizationsQueryHandler : IRequestHandler<GetAuthorizationsQu
 
     public Task<Page<AuthorizationSummaryDto>> Handle(GetAuthorizationsQuery request, CancellationToken cancellationToken)
     {
-        var filters = request.Filters ?? new AuthorizationFilters();
         return _repository.ListAsync(entity =>
-            (filters.AffiliateId == null || entity.AffiliateId == filters.AffiliateId) &&
-            (filters.ContractorId == null || entity.ContractorId == filters.ContractorId) &&
-            (filters.IntermediaryId == null || entity.IntermediaryId == filters.IntermediaryId) &&
-            (filters.IsActive == null || entity.IsActive == filters.IsActive) &&
-            (filters.CreatedFrom == null || entity.CreatedDate >= filters.CreatedFrom) &&
-            (filters.CreatedBefore == null || entity.CreatedDate < filters.CreatedBefore),
+            (request.AffiliateId == null || entity.AffiliateId == request.AffiliateId) &&
+            (request.ContractorId == null || entity.ContractorId == request.ContractorId) &&
+            (request.IntermediaryId == null || entity.IntermediaryId == request.IntermediaryId) &&
+            (request.IsActive == null || entity.IsActive == request.IsActive) &&
+            (request.CreatedFrom == null || entity.CreatedDate >= request.CreatedFrom) &&
+            (request.CreatedBefore == null || entity.CreatedDate < request.CreatedBefore),
             query => query.OrderByDescending(entity => entity.CreatedDate).ThenByDescending(entity => entity.Id),
             entity => new AuthorizationSummaryDto(entity.Id, entity.AffiliateId, entity.ContractorId, entity.IntermediaryId,
                 entity.IsActive, entity.CreatedDate, entity.Details.Where(detail => !detail.IsDelete).Sum(detail => detail.ClaimedAmount),

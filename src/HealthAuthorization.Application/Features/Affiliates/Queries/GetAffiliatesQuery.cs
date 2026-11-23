@@ -1,24 +1,14 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using HealthAuthorization.Application.Common.Models;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
 namespace HealthAuthorization.Application.Features.Affiliates.Queries;
 
-public class GetAffiliatesQuery : IRequest<Page<AffiliateDto>>
+public class GetAffiliatesQuery : PaginationFilter, IRequest<Page<AffiliateDto>>
 {
-    public string? Search { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
     public bool? IsActive { get; set; }
-
-    public GetAffiliatesQuery(string? Search = null, int PageNumber = 1, int PageSize = 20, bool? IsActive = null)
-    {
-        this.Search = Search;
-        this.PageNumber = PageNumber;
-        this.PageSize = PageSize;
-        this.IsActive = IsActive;
-    }
 }
 
 public class GetAffiliatesQueryHandler : IRequestHandler<GetAffiliatesQuery, Page<AffiliateDto>>

@@ -1,26 +1,15 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using HealthAuthorization.Application.Common.Models;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
 namespace HealthAuthorization.Application.Features.Providers.Queries;
 
-public class GetProvidersQuery : IRequest<Page<ProviderDto>>
+public class GetProvidersQuery : PaginationFilter, IRequest<Page<ProviderDto>>
 {
-    public string? Search { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
     public bool? IsActive { get; set; }
     public Guid? ProviderTypeId { get; set; }
-
-    public GetProvidersQuery(string? Search = null, int PageNumber = 1, int PageSize = 20, bool? IsActive = null, Guid? ProviderTypeId = null)
-    {
-        this.Search = Search;
-        this.PageNumber = PageNumber;
-        this.PageSize = PageSize;
-        this.IsActive = IsActive;
-        this.ProviderTypeId = ProviderTypeId;
-    }
 }
 
 public class GetProvidersQueryHandler : IRequestHandler<GetProvidersQuery, Page<ProviderDto>>

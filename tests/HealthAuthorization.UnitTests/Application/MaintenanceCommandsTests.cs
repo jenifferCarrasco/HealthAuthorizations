@@ -23,8 +23,8 @@ public sealed class MaintenanceCommandsTests
         await changeStatus.Handle(new ChangeAffiliateStatusCommand(affiliate.Id, false), token);
         Assert.False(affiliate.IsActive);
         Assert.False(affiliate.IsDelete);
-        Assert.Equal(1L, (await list.Handle(new GetAffiliatesQuery(IsActive: false), token)).TotalCount);
-        Assert.Equal(0L, (await list.Handle(new GetAffiliatesQuery(IsActive: true), token)).TotalCount);
+        Assert.Equal(1L, (await list.Handle(new GetAffiliatesQuery { IsActive = false }, token)).TotalCount);
+        Assert.Equal(0L, (await list.Handle(new GetAffiliatesQuery { IsActive = true }, token)).TotalCount);
 
         await changeStatus.Handle(new ChangeAffiliateStatusCommand(affiliate.Id, true), token);
         await delete.Handle(new DeleteAffiliateCommand(affiliate.Id), token);

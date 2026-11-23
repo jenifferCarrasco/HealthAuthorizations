@@ -32,26 +32,6 @@ public class AuthorizationInput
     }
 }
 
-public class AuthorizationFilters
-{
-    public Guid? AffiliateId { get; set; }
-    public Guid? ContractorId { get; set; }
-    public Guid? IntermediaryId { get; set; }
-    public bool? IsActive { get; set; }
-    public DateTimeOffset? CreatedFrom { get; set; }
-    public DateTimeOffset? CreatedBefore { get; set; }
-
-    public AuthorizationFilters(Guid? AffiliateId = null, Guid? ContractorId = null, Guid? IntermediaryId = null, bool? IsActive = null, DateTimeOffset? CreatedFrom = null, DateTimeOffset? CreatedBefore = null)
-    {
-        this.AffiliateId = AffiliateId;
-        this.ContractorId = ContractorId;
-        this.IntermediaryId = IntermediaryId;
-        this.IsActive = IsActive;
-        this.CreatedFrom = CreatedFrom;
-        this.CreatedBefore = CreatedBefore;
-    }
-}
-
 public class AuthorizationSummaryDto
 {
     public Guid Id { get; set; }

@@ -22,7 +22,7 @@ dotnet test
 dotnet run --project src/HealthAuthorization.API
 ```
 
-La API inicia con el perfil HTTP local. Los endpoints y los casos de prueba se incorporarán en etapas posteriores.
+La API inicia con el perfil HTTP local. En desarrollo, Swagger UI está disponible en `/swagger`.
 
 ## Notificaciones de autorizaciones
 

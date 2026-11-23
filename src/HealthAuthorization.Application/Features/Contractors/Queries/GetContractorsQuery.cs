@@ -1,24 +1,14 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using HealthAuthorization.Application.Common.Models;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
 namespace HealthAuthorization.Application.Features.Contractors.Queries;
 
-public class GetContractorsQuery : IRequest<Page<ContractorDto>>
+public class GetContractorsQuery : PaginationFilter, IRequest<Page<ContractorDto>>
 {
-    public string? Search { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
     public bool? IsActive { get; set; }
-
-    public GetContractorsQuery(string? Search = null, int PageNumber = 1, int PageSize = 20, bool? IsActive = null)
-    {
-        this.Search = Search;
-        this.PageNumber = PageNumber;
-        this.PageSize = PageSize;
-        this.IsActive = IsActive;
-    }
 }
 
 public class GetContractorsQueryHandler : IRequestHandler<GetContractorsQuery, Page<ContractorDto>>

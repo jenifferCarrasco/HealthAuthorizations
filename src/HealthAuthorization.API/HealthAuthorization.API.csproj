@@ -8,6 +8,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.15">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
     <ProjectReference Include="../HealthAuthorization.Application/HealthAuthorization.Application.csproj" />
     <ProjectReference Include="../HealthAuthorization.Infrastructure/HealthAuthorization.Infrastructure.csproj" />
   </ItemGroup>

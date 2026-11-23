@@ -23,3 +23,9 @@ dotnet run --project src/HealthAuthorization.API
 ```
 
 La API inicia con el perfil HTTP local. Los endpoints y los casos de prueba se incorporarán en etapas posteriores.
+
+## Notificaciones de autorizaciones
+
+Los clientes SignalR pueden conectarse a `/hubs/authorizations` y suscribirse a `AuthorizationCreated` y `AuthorizationStatusChanged` antes de iniciar la conexión. Los eventos incluyen el identificador de la autorización y la fecha UTC. El evento de cambio de estado incluye también `isActive`.
+
+Las notificaciones se emiten después de guardar el cambio por REST y se difunden a todos los clientes conectados al Hub. Un fallo del envío se registra y la respuesta REST conserva el resultado del guardado. Los clientes desconectados no reciben los eventos anteriores al reconectarse. La implementación no persiste ni reintenta las notificaciones.

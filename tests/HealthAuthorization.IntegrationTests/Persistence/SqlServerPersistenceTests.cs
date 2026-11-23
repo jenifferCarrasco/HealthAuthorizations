@@ -4,6 +4,7 @@ using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Features.Affiliates;
 using HealthAuthorization.Application.Features.Affiliates.Commands;
 using HealthAuthorization.Application.Features.Authorizations;
+using HealthAuthorization.Application.Features.Authorizations.Notifications;
 using HealthAuthorization.Domain.Entities;
 using HealthAuthorization.Infrastructure;
 using HealthAuthorization.Infrastructure.Persistence;
@@ -141,6 +142,8 @@ public sealed class SqlServerPersistenceTests
     {
         var services = new ServiceCollection();
         services.AddApplication().AddInfrastructure(ConnectionString);
+        services.AddLogging();
+        services.AddSingleton<IAuthorizationNotificationService, NotificationServiceStub>();
         await using var provider = services.BuildServiceProvider(
             new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var scope = provider.CreateAsyncScope();
@@ -161,6 +164,20 @@ public sealed class SqlServerPersistenceTests
             .AddInterceptors(new SuppressDatabaseWrite())
             .Options;
         return new HealthAuthorizationDbContext(options, clock ?? new FixedClock(), user ?? new CurrentUser());
+    }
+
+    private class NotificationServiceStub : IAuthorizationNotificationService
+    {
+        public Task NotifyCreatedAsync(AuthorizationCreatedNotification notification, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task NotifyStatusChangedAsync(AuthorizationStatusChangedNotification notification,
+            CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class CurrentUser : ICurrentUser

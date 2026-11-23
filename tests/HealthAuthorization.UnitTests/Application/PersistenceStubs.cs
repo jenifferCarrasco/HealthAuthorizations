@@ -49,7 +49,15 @@ internal sealed class MemoryRepository<TEntity> : IRepositoryAsync<TEntity> wher
 internal sealed class UnitOfWorkStub : IUnitOfWork
 {
     public int SaveCount { get; private set; }
+    public Exception? SaveError { get; set; }
 
-    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(++SaveCount);
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        if (SaveError != null)
+        {
+            return Task.FromException<int>(SaveError);
+        }
+
+        return Task.FromResult(++SaveCount);
+    }
 }

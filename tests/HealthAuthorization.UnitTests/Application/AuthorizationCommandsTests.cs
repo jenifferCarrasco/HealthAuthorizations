@@ -2,8 +2,10 @@ using FluentValidation;
 using HealthAuthorization.Application.Common;
 using HealthAuthorization.Application.Features.Authorizations;
 using HealthAuthorization.Application.Features.Authorizations.Commands;
+using HealthAuthorization.Application.Features.Authorizations.Notifications;
 using HealthAuthorization.Application.Features.Authorizations.Validators;
 using HealthAuthorization.Domain.Entities;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace HealthAuthorization.UnitTests.Application;
 
@@ -13,6 +15,8 @@ public sealed class AuthorizationCommandsTests
     private readonly Provider _provider = new();
     private readonly ServiceType _serviceType = new();
     private readonly UnitOfWorkStub _unit = new();
+    private readonly NotificationServiceStub _notifications = new();
+    private readonly FixedClock _clock = new();
 
     [Theory]
     [InlineData(1)]
@@ -20,10 +24,12 @@ public sealed class AuthorizationCommandsTests
     public async Task CreatesAuthorizationWithConsistentTotalsInOneSave(int count)
     {
         var repository = new MemoryRepository<Authorization>();
-        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
+            NullLogger<CreateAuthorizationCommandHandler>.Instance);
         var command = new CreateAuthorizationCommand(Input(Enumerable.Repeat(Service(100m), count).ToArray()));
 
         Assert.True(new CreateAuthorizationCommandValidator().Validate(command).IsValid);
+        _notifications.BeforePublish = () => Assert.Equal(1, _unit.SaveCount);
         var id = await handler.Handle(command, CancellationToken.None);
 
         var authorization = Assert.Single(repository.Items);
@@ -34,6 +40,10 @@ public sealed class AuthorizationCommandsTests
         Assert.Equal(30m * count, authorization.TotalAffiliateAmount);
         Assert.All(authorization.Details, item => Assert.Equal(id, item.AuthorizationId));
         Assert.Equal(1, _unit.SaveCount);
+        var notification = Assert.Single(_notifications.Created);
+        Assert.Equal(id, notification.AuthorizationId);
+        Assert.Equal(_clock.GetUtcNow(), notification.OccurredAt);
+        Assert.Equal(TimeSpan.Zero, notification.OccurredAt.Offset);
     }
 
     [Fact]
@@ -51,7 +61,8 @@ public sealed class AuthorizationCommandsTests
         var existing = new Authorization { Details = { detail } };
         var repository = new MemoryRepository<Authorization>(existing);
         var writer = CreateWriter();
-        var create = new CreateAuthorizationCommandHandler(repository, writer, _unit);
+        var create = new CreateAuthorizationCommandHandler(repository, writer, _unit, _notifications, _clock,
+            NullLogger<CreateAuthorizationCommandHandler>.Instance);
         var update = new UpdateAuthorizationCommandHandler(repository, writer, _unit);
 
         await Assert.ThrowsAsync<ValidationException>(() =>
@@ -95,8 +106,9 @@ public sealed class AuthorizationCommandsTests
         var detail = new AuthorizationDetail { ClaimedAmount = 100m, ArsAmount = 70m, AffiliateAmount = 30m };
         var existing = new Authorization { AffiliateId = _affiliate.Id, Details = { detail } };
         var repository = new MemoryRepository<Authorization>(existing);
-        var handler = new ChangeAuthorizationStatusCommandHandler(repository, _unit, new TestReactivationPolicy(false));
+        var handler = CreateStatusHandler(repository, false);
         var command = new ChangeAuthorizationStatusCommand(existing.Id, false);
+        _notifications.BeforePublish = () => Assert.Equal(1, _unit.SaveCount);
 
         await handler.Handle(command, CancellationToken.None);
         await handler.Handle(command, CancellationToken.None);
@@ -107,6 +119,10 @@ public sealed class AuthorizationCommandsTests
         Assert.False(detail.IsDelete);
         Assert.Equal(100m, existing.TotalClaimedAmount);
         Assert.Equal(1, _unit.SaveCount);
+        var notification = Assert.Single(_notifications.StatusChanged);
+        Assert.Equal(existing.Id, notification.AuthorizationId);
+        Assert.False(notification.IsActive);
+        Assert.Equal(_clock.GetUtcNow(), notification.OccurredAt);
     }
 
     [Fact]
@@ -170,7 +186,8 @@ public sealed class AuthorizationCommandsTests
     public async Task RejectsUnknownProviderWithoutAddingOrSaving()
     {
         var repository = new MemoryRepository<Authorization>();
-        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
+            NullLogger<CreateAuthorizationCommandHandler>.Instance);
         var input = Input(new AuthorizationServiceInput(Guid.NewGuid(), _serviceType.Id, 100m));
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
@@ -178,6 +195,7 @@ public sealed class AuthorizationCommandsTests
 
         Assert.Empty(repository.Items);
         Assert.Equal(0, _unit.SaveCount);
+        Assert.Empty(_notifications.Created);
     }
 
     private AuthorizationInput Input(params AuthorizationServiceInput[] services) => new(_affiliate.Id, services);
@@ -197,7 +215,7 @@ public sealed class AuthorizationCommandsTests
         var authorization = new Authorization { IsActive = false };
         authorization.Details.Add(new AuthorizationDetail { ClaimedAmount = 100m });
         var repository = new MemoryRepository<Authorization>(authorization);
-        var handler = new ChangeAuthorizationStatusCommandHandler(repository, _unit, new TestReactivationPolicy(allowed));
+        var handler = CreateStatusHandler(repository, allowed);
         var command = new ChangeAuthorizationStatusCommand(authorization.Id, true);
 
         if (allowed)
@@ -212,6 +230,103 @@ public sealed class AuthorizationCommandsTests
         Assert.Equal(allowed, authorization.IsActive);
         Assert.Equal(100m, authorization.TotalClaimedAmount);
         Assert.Equal(allowed ? 1 : 0, _unit.SaveCount);
+        Assert.Equal(allowed ? 1 : 0, _notifications.StatusChanged.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedSaveDoesNotPublishNotifications(bool changeStatus)
+    {
+        var failure = new InvalidOperationException("Falló el guardado.");
+        _unit.SaveError = failure;
+        var existing = new Authorization();
+        var repository = new MemoryRepository<Authorization>(existing);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => ExecuteOperationAsync(changeStatus, repository, existing));
+
+        Assert.Same(failure, thrown);
+        Assert.Empty(_notifications.Created);
+        Assert.Empty(_notifications.StatusChanged);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedNotificationPreservesSuccessfulSave(bool changeStatus)
+    {
+        var existing = new Authorization();
+        var repository = new MemoryRepository<Authorization>(existing);
+        _notifications.BeforePublish = () => Assert.Equal(1, _unit.SaveCount);
+        _notifications.SendError = new InvalidOperationException("Falló el envío.");
+
+        var id = await ExecuteOperationAsync(changeStatus, repository, existing);
+
+        Assert.Equal(1, _unit.SaveCount);
+        Assert.Contains(repository.Items, item => item.Id == id);
+        if (changeStatus)
+        {
+            Assert.False(existing.IsActive);
+            Assert.Equal(id, Assert.Single(_notifications.StatusChanged).AuthorizationId);
+        }
+        else
+        {
+            Assert.Equal(id, Assert.Single(_notifications.Created).AuthorizationId);
+        }
+    }
+
+    private async Task<Guid> ExecuteOperationAsync(bool changeStatus, MemoryRepository<Authorization> repository,
+        Authorization existing)
+    {
+        if (changeStatus)
+        {
+            await CreateStatusHandler(repository, false)
+                .Handle(new ChangeAuthorizationStatusCommand(existing.Id, false), CancellationToken.None);
+            return existing.Id;
+        }
+
+        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
+            NullLogger<CreateAuthorizationCommandHandler>.Instance);
+        return await handler.Handle(new CreateAuthorizationCommand(Input(Service(100m))), CancellationToken.None);
+    }
+
+    private ChangeAuthorizationStatusCommandHandler CreateStatusHandler(MemoryRepository<Authorization> repository,
+        bool canReactivate)
+    {
+        return new ChangeAuthorizationStatusCommandHandler(repository, _unit, new TestReactivationPolicy(canReactivate),
+            _notifications, _clock, NullLogger<ChangeAuthorizationStatusCommandHandler>.Instance);
+    }
+
+    private class FixedClock : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow()
+        {
+            return new DateTimeOffset(2026, 11, 23, 12, 0, 0, TimeSpan.Zero);
+        }
+    }
+
+    private class NotificationServiceStub : IAuthorizationNotificationService
+    {
+        public List<AuthorizationCreatedNotification> Created { get; } = new List<AuthorizationCreatedNotification>();
+        public List<AuthorizationStatusChangedNotification> StatusChanged { get; } = new List<AuthorizationStatusChangedNotification>();
+        public Action? BeforePublish { get; set; }
+        public Exception? SendError { get; set; }
+
+        public Task NotifyCreatedAsync(AuthorizationCreatedNotification notification, CancellationToken cancellationToken)
+        {
+            BeforePublish?.Invoke();
+            Created.Add(notification);
+            return SendError == null ? Task.CompletedTask : Task.FromException(SendError);
+        }
+
+        public Task NotifyStatusChangedAsync(AuthorizationStatusChangedNotification notification,
+            CancellationToken cancellationToken)
+        {
+            BeforePublish?.Invoke();
+            StatusChanged.Add(notification);
+            return SendError == null ? Task.CompletedTask : Task.FromException(SendError);
+        }
     }
 
     private sealed class TestReactivationPolicy : IAuthorizationReactivationPolicy

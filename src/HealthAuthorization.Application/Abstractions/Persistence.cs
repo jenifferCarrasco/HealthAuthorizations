@@ -8,7 +8,7 @@ public interface IRepositoryAsync<TEntity> where TEntity : BaseEntity
 {
     Task<TEntity?> GetForUpdateAsync(Guid id, CancellationToken cancellationToken);
     Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken);
-    Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken);
+    Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, Expression<Func<TEntity, bool>> predicate, CancellationToken cancellationToken);
     Task<bool> AnyAsync(Expression<Func<TEntity, bool>> predicate, bool includeDeleted, CancellationToken cancellationToken);
     Task<TResult?> FindAsync<TResult>(Guid id, Expression<Func<TEntity, TResult>> projection,
         CancellationToken cancellationToken) where TResult : class;

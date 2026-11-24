@@ -1,8 +1,13 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
 using HealthAuthorization.API.Controllers;
 using HealthAuthorization.API.Errors;
+using HealthAuthorization.API.Hubs;
+using HealthAuthorization.API.Notifications;
 using HealthAuthorization.API.Security;
 using HealthAuthorization.Application;
 using HealthAuthorization.Application.Common;
@@ -239,8 +244,151 @@ public class SqlServerBusinessLifecycleTests
         Assert.Equal(1, await context.Affiliates.CountAsync(row => row.AffiliateNumber == original.AffiliateNumber));
     }
 
+    [SqlServerBusinessFact]
+    public async Task InactiveCatalogReferencesAreRejectedForNewDetailsButHistoricalReferencesAndReplayRemainAvailable()
+    {
+        var tokens = new DevelopmentJwtTestTokens();
+        await using var app = await StartAsync(tokens, new NotificationCounter());
+        using var client = CreateClient(app, tokens, Guid.NewGuid());
+        var affiliateId = await CreateAffiliateAsync(client);
+        using var service = await client.PostAsJsonAsync("/api/service-types", new { name = $"Prueba {Guid.NewGuid():N}" });
+        Assert.Equal(HttpStatusCode.Created, service.StatusCode);
+        var servicePath = service.Headers.Location!;
+        var serviceId = Guid.Parse(servicePath.Segments.Last());
+        var key = Guid.NewGuid();
+        var original = new AuthorizationInput(affiliateId, [new AuthorizationServiceInput(ProviderId, serviceId, 100m)]);
+        using var created = await CreateAuthorizationAsync(client, key, original);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var location = created.Headers.Location!;
+        var stored = Assert.Single(await ReadAuthorizationsAsync(app, key));
+        var detail = Assert.Single(stored.Details);
+
+        using var deactivateService = await client.PatchAsJsonAsync(servicePath.AbsoluteUri + "/status", new { isActive = false });
+        Assert.Equal(HttpStatusCode.NoContent, deactivateService.StatusCode);
+        using var deactivateAffiliate = await client.PatchAsJsonAsync($"/api/affiliates/{affiliateId}/status", new { isActive = false });
+        Assert.Equal(HttpStatusCode.NoContent, deactivateAffiliate.StatusCode);
+        using var fresh = await CreateAuthorizationAsync(client, Guid.NewGuid(), original);
+        Assert.Equal(HttpStatusCode.NotFound, fresh.StatusCode);
+        using var replay = await CreateAuthorizationAsync(client, key, original);
+        Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
+        Assert.Equal(location, replay.Headers.Location);
+
+        var retained = new AuthorizationServiceInput(ProviderId, serviceId, 100m, detail.Id);
+        using var replace = await client.PutAsJsonAsync(location, new AuthorizationInput(affiliateId,
+            [new AuthorizationServiceInput(ProviderId, serviceId, 10m), retained]));
+        Assert.Equal(HttpStatusCode.NotFound, replace.StatusCode);
+        var unchanged = Assert.Single(await ReadAuthorizationsAsync(app, key));
+        Assert.Equal(100m, unchanged.TotalClaimedAmount);
+        Assert.Equal(detail.Id, Assert.Single(unchanged.Details).Id);
+
+        using var keep = await client.PutAsJsonAsync(location, new AuthorizationInput(affiliateId, [retained]));
+        Assert.Equal(HttpStatusCode.NoContent, keep.StatusCode);
+        var current = await client.GetFromJsonAsync<AuthorizationDto>(location);
+        Assert.NotNull(current);
+        Assert.Equal(100m, current.Summary.TotalClaimedAmount);
+        Assert.Equal(detail.Id, Assert.Single(current.Details).Id);
+    }
+
+    [SqlServerBusinessFact]
+    public async Task ConnectedSignalRClientReceivesOnlyEffectiveChanges()
+    {
+        var tokens = new DevelopmentJwtTestTokens();
+        await using var app = await StartAsync(tokens, null, new InvalidDetailOnFirstInsert());
+        var user = Guid.NewGuid();
+        using var client = CreateClient(app, tokens, user);
+        var hub = new UriBuilder(app.Urls.Single()) { Scheme = "ws", Path = AuthorizationHub.Route }.Uri;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        using var anonymous = new ClientWebSocket();
+        anonymous.Options.CollectHttpResponseDetails = true;
+        await Assert.ThrowsAsync<WebSocketException>(() => anonymous.ConnectAsync(hub, timeout.Token));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.HttpStatusCode);
+        using var forbidden = new ClientWebSocket();
+        forbidden.Options.CollectHttpResponseDetails = true;
+        forbidden.Options.SetRequestHeader("Authorization", $"Bearer {tokens.Create("Visitor", user.ToString())}");
+        await Assert.ThrowsAsync<WebSocketException>(() => forbidden.ConnectAsync(hub, timeout.Token));
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.HttpStatusCode);
+
+        using var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("Authorization", $"Bearer {tokens.Create("Operator", user.ToString())}");
+        await socket.ConnectAsync(hub, timeout.Token);
+        await socket.SendAsync(Encoding.UTF8.GetBytes("{\"protocol\":\"json\",\"version\":1}\u001e"),
+            WebSocketMessageType.Text, true, timeout.Token);
+        var frames = new Queue<JsonElement>();
+        Assert.Empty((await ReadHubFrameAsync(socket, frames, timeout.Token)).EnumerateObject());
+
+        var affiliateId = await CreateAffiliateAsync(client);
+        var key = Guid.NewGuid();
+        var input = new AuthorizationInput(affiliateId,
+            [new AuthorizationServiceInput(ProviderId, ServiceId, 100m), new AuthorizationServiceInput(ProviderId, ServiceId, 50m)]);
+        using var failed = await CreateAuthorizationAsync(client, key, input);
+        Assert.Equal(HttpStatusCode.Conflict, failed.StatusCode);
+        using var created = await CreateAuthorizationAsync(client, key, input);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var location = created.Headers.Location!;
+        var id = Guid.Parse(location.Segments.Last());
+        await AssertHubEventAsync(socket, frames, "AuthorizationCreated", id, null, timeout.Token);
+
+        using var replay = await CreateAuthorizationAsync(client, key, input);
+        Assert.Equal(location, replay.Headers.Location);
+        var statusPath = location.AbsoluteUri + "/status";
+        using var changed = await client.PatchAsJsonAsync(statusPath, new { isActive = false }, timeout.Token);
+        Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+        await AssertHubEventAsync(socket, frames, "AuthorizationStatusChanged", id, false, timeout.Token);
+        using var unchanged = await client.PatchAsJsonAsync(statusPath, new { isActive = false }, timeout.Token);
+        Assert.Equal(HttpStatusCode.NoContent, unchanged.StatusCode);
+        using var next = await CreateAuthorizationAsync(client, Guid.NewGuid(), input);
+        Assert.Equal(HttpStatusCode.Created, next.StatusCode);
+        await AssertHubEventAsync(socket, frames, "AuthorizationCreated",
+            Guid.Parse(next.Headers.Location!.Segments.Last()), null, timeout.Token);
+    }
+
+    private static async Task AssertHubEventAsync(ClientWebSocket socket, Queue<JsonElement> frames,
+        string expectedEvent, Guid expectedId, bool? expectedStatus, CancellationToken cancellationToken)
+    {
+        JsonElement frame;
+        do
+        {
+            frame = await ReadHubFrameAsync(socket, frames, cancellationToken);
+        } while (frame.GetProperty("type").GetInt32() == 6);
+
+        Assert.Equal(1, frame.GetProperty("type").GetInt32());
+        Assert.Equal(expectedEvent, frame.GetProperty("target").GetString());
+        var payload = Assert.Single(frame.GetProperty("arguments").EnumerateArray());
+        Assert.Equal(expectedId, payload.GetProperty("authorizationId").GetGuid());
+        Assert.True(payload.GetProperty("occurredAt").TryGetDateTimeOffset(out _));
+        Assert.Equal(expectedStatus.HasValue ? 3 : 2, payload.EnumerateObject().Count());
+        if (expectedStatus.HasValue)
+        {
+            Assert.Equal(expectedStatus.Value, payload.GetProperty("isActive").GetBoolean());
+        }
+    }
+
+    private static async Task<JsonElement> ReadHubFrameAsync(
+        ClientWebSocket socket, Queue<JsonElement> frames, CancellationToken cancellationToken)
+    {
+        while (frames.Count == 0)
+        {
+            using var message = new MemoryStream();
+            var buffer = new byte[4096];
+            WebSocketReceiveResult chunk;
+            do
+            {
+                chunk = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                Assert.Equal(WebSocketMessageType.Text, chunk.MessageType);
+                message.Write(buffer, 0, chunk.Count);
+            } while (!chunk.EndOfMessage);
+
+            foreach (var frame in Encoding.UTF8.GetString(message.ToArray()).Split('\u001e', StringSplitOptions.RemoveEmptyEntries))
+            {
+                using var document = JsonDocument.Parse(frame);
+                frames.Enqueue(document.RootElement.Clone());
+            }
+        }
+        return frames.Dequeue();
+    }
+
     private static async Task<WebApplication> StartAsync(
-        DevelopmentJwtTestTokens tokens, NotificationCounter notifications, SaveChangesInterceptor? interceptor = null)
+        DevelopmentJwtTestTokens tokens, NotificationCounter? notifications, SaveChangesInterceptor? interceptor = null)
     {
         var configured = Environment.GetEnvironmentVariable(AuthorizationIdempotencySqlServerTests.ConnectionVariable);
         var connection = new SqlConnectionStringBuilder(configured!);
@@ -252,7 +400,15 @@ public class SqlServerBusinessLifecycleTests
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         builder.Logging.SetMinimumLevel(LogLevel.Critical);
         builder.Services.AddApplication().AddInfrastructure(connection.ConnectionString);
-        builder.Services.AddSingleton<IAuthorizationNotificationService>(notifications);
+        builder.Services.AddSignalR();
+        if (notifications is null)
+        {
+            builder.Services.AddSingleton<IAuthorizationNotificationService, AuthorizationNotificationService>();
+        }
+        else
+        {
+            builder.Services.AddSingleton<IAuthorizationNotificationService>(notifications);
+        }
         if (interceptor is not null)
         {
             builder.Services.ConfigureDbContext<HealthAuthorizationDbContext>(options => options.AddInterceptors(interceptor));
@@ -276,6 +432,7 @@ public class SqlServerBusinessLifecycleTests
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
+        app.MapHub<AuthorizationHub>(AuthorizationHub.Route);
         await app.StartAsync();
         return app;
     }

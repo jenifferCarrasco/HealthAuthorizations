@@ -1,4 +1,4 @@
-param([string]$Filter)
+param([string]$Filter, [string]$CoverageDirectory, [string]$PerformanceDirectory)
 $ErrorActionPreference = 'Stop'
 $previousEnvironment = @{}
 foreach ($name in @('DOTNET_CLI_TELEMETRY_OPTOUT', 'MSSQL_SA_PASSWORD', 'HEALTHAUTHORIZATION_IDEMPOTENCY_TEST_CONNECTION', 'ConnectionStrings__HealthAuthorization', 'ASPNETCORE_ENVIRONMENT')) {
@@ -10,7 +10,11 @@ $started = $false
 try {
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:MSSQL_SA_PASSWORD = 'Aa9!' + [Guid]::NewGuid().ToString('N')
-    docker run -d --name $container -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_SA_PASSWORD -p '127.0.0.1::1433' mcr.microsoft.com/mssql/server:2022-latest | Out-Null
+    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+    $listener.Start()
+    $hostPort = $listener.LocalEndpoint.Port
+    $listener.Stop()
+    docker run -d --name $container -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_SA_PASSWORD -p "127.0.0.1:${hostPort}:1433" mcr.microsoft.com/mssql/server:2022-latest | Out-Null
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $started = $true
     $ready = $false
@@ -31,8 +35,15 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $testArgs = @('HealthAuthorization.slnx', '-c', 'Release', '--no-build', '--no-restore')
     if ($Filter) { $testArgs += @('--filter', $Filter) }
+    if ($CoverageDirectory) {
+        $testArgs += @('--collect', 'XPlat Code Coverage', '--results-directory', $CoverageDirectory,
+            '--', 'DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover')
+    }
     dotnet test @testArgs
     $testExit = $LASTEXITCODE
+    if ($testExit -eq 0 -and $PerformanceDirectory) {
+        & "$PSScriptRoot/Measure-SqlServerApi.ps1" -Container $container -OutputDirectory $PerformanceDirectory
+    }
     docker exec $container sh -c 'SQLCMDPASSWORD="$MSSQL_SA_PASSWORD" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -d HealthAuthorizationIdempotencyTests -b -Q "SET NOCOUNT ON; SELECT DB_NAME() AS TestDatabase; SELECT MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId; SELECT COUNT(*) AS Authorizations FROM Authorizations; SELECT COUNT(*) AS Details FROM AuthorizationDetails; SELECT COUNT(*) AS HistoricalDetails FROM AuthorizationDetails WHERE IsDelete = 1; SELECT COUNT(*) AS DuplicateScopes FROM (SELECT IdempotencyScopeId, IdempotencyKey FROM Authorizations WHERE IdempotencyKey IS NOT NULL GROUP BY IdempotencyScopeId, IdempotencyKey HAVING COUNT(*) > 1) AS Duplicates;"'
     if ($testExit -ne 0) { exit $testExit }
     exit $LASTEXITCODE

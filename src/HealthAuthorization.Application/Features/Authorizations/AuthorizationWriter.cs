@@ -36,21 +36,21 @@ public class AuthorizationWriter
         }
 
         if (input.AffiliateId == Guid.Empty || (authorization.AffiliateId != input.AffiliateId &&
-            !await _affiliates.ExistsAsync(input.AffiliateId, cancellationToken)))
+            !await _affiliates.AnyAsync(entity => entity.Id == input.AffiliateId && entity.IsActive, includeDeleted: false, cancellationToken)))
         {
-            throw new NotFoundException("El afiliado no existe.");
+            throw new NotFoundException("El afiliado no existe o está inactivo.");
         }
 
         if (input.ContractorId is Guid contractorId && contractorId != authorization.ContractorId &&
-            !await _contractors.ExistsAsync(contractorId, cancellationToken))
+            !await _contractors.AnyAsync(entity => entity.Id == contractorId && entity.IsActive, includeDeleted: false, cancellationToken))
         {
-            throw new NotFoundException("El contratante no existe.");
+            throw new NotFoundException("El contratante no existe o está inactivo.");
         }
 
         if (input.IntermediaryId is Guid intermediaryId && intermediaryId != authorization.IntermediaryId &&
-            !await _intermediaries.ExistsAsync(intermediaryId, cancellationToken))
+            !await _intermediaries.AnyAsync(entity => entity.Id == intermediaryId && entity.IsActive, includeDeleted: false, cancellationToken))
         {
-            throw new NotFoundException("El intermediario no existe.");
+            throw new NotFoundException("El intermediario no existe o está inactivo.");
         }
 
         var existing = authorization.Details.Where(detail => !detail.IsDelete).ToDictionary(detail => detail.Id);
@@ -77,16 +77,16 @@ public class AuthorizationWriter
 
         var providerIds = planned.Where(change => change.Existing?.ProviderId != change.Values.ProviderId)
             .Select(change => change.Values.ProviderId).Distinct().ToArray();
-        if (!await _providers.ExistAllAsync(providerIds, cancellationToken))
+        if (!await _providers.ExistAllAsync(providerIds, entity => entity.IsActive, cancellationToken))
         {
-            throw new NotFoundException("Uno o más prestadores no existen.");
+            throw new NotFoundException("Uno o más prestadores no existen o están inactivos.");
         }
 
         var serviceTypeIds = planned.Where(change => change.Existing?.ServiceTypeId != change.Values.ServiceTypeId)
             .Select(change => change.Values.ServiceTypeId).Distinct().ToArray();
-        if (!await _serviceTypes.ExistAllAsync(serviceTypeIds, cancellationToken))
+        if (!await _serviceTypes.ExistAllAsync(serviceTypeIds, entity => entity.IsActive, cancellationToken))
         {
-            throw new NotFoundException("Uno o más tipos de servicio no existen.");
+            throw new NotFoundException("Uno o más tipos de servicio no existen o están inactivos.");
         }
 
         var candidate = new Authorization { Details = planned.Select(change => change.Values).ToList() };

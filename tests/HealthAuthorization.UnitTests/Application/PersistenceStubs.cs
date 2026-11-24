@@ -43,8 +43,8 @@ internal class MemoryRepository<TEntity> : IRepositoryAsync<TEntity> where TEnti
         Task.FromResult(Visible.SingleOrDefault(item => item.Id == id));
     public Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken) =>
         Task.FromResult(Visible.Any(item => item.Id == id));
-    public Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken) =>
-        Task.FromResult(ids.All(id => Visible.Any(item => item.Id == id)));
+    public Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, Expression<Func<TEntity, bool>> predicate, CancellationToken cancellationToken) =>
+        Task.FromResult(ids.All(id => Visible.Where(predicate.Compile()).Any(item => item.Id == id)));
 
     public void Add(TEntity entity) => Items.Add(entity);
     public void Update(TEntity entity, bool forceWrite = false) => Updates++;

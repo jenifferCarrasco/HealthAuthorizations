@@ -325,6 +325,51 @@ public sealed class AuthorizationCommandsTests
     }
 
     [Fact]
+    public async Task InactiveReplacementDoesNotModifyExistingAuthorization()
+    {
+        var oldContractor = new Contractor();
+        var inactiveContractor = new Contractor { IsActive = false };
+        var inactiveIntermediary = new Intermediary { IsActive = false };
+        var inactiveProvider = new Provider { IsActive = false };
+        var writer = new AuthorizationWriter(
+            new MemoryRepository<Affiliate>(_affiliate),
+            new MemoryRepository<Contractor>(oldContractor, inactiveContractor),
+            new MemoryRepository<Intermediary>(inactiveIntermediary),
+            new MemoryRepository<Provider>(_provider, inactiveProvider),
+            new MemoryRepository<ServiceType>(_serviceType));
+        var detail = new AuthorizationDetail
+        {
+            ProviderId = _provider.Id, ServiceTypeId = _serviceType.Id, ClaimedAmount = 100m,
+            ArsAmount = 70m, AffiliateAmount = 30m
+        };
+        var authorization = new Authorization
+        {
+            AffiliateId = _affiliate.Id, ContractorId = oldContractor.Id, Details = [detail]
+        };
+        var repository = new MemoryRepository<Authorization>(authorization);
+        var handler = new UpdateAuthorizationCommandHandler(repository, writer, _unit);
+        var requests = new[]
+        {
+            new AuthorizationInput(_affiliate.Id, [Service(20m, detail.Id)], inactiveContractor.Id),
+            new AuthorizationInput(_affiliate.Id, [Service(20m, detail.Id)], oldContractor.Id, inactiveIntermediary.Id),
+            new AuthorizationInput(_affiliate.Id,
+                [new AuthorizationServiceInput(inactiveProvider.Id, _serviceType.Id, 20m, detail.Id)], oldContractor.Id)
+        };
+
+        foreach (var input in requests)
+        {
+            await Assert.ThrowsAsync<NotFoundException>(() =>
+                handler.Handle(new UpdateAuthorizationCommand(authorization.Id, input), CancellationToken.None));
+        }
+
+        Assert.Equal(oldContractor.Id, authorization.ContractorId);
+        Assert.Null(authorization.IntermediaryId);
+        Assert.Equal(_provider.Id, Assert.Single(authorization.Details).ProviderId);
+        Assert.Equal(100m, authorization.TotalClaimedAmount);
+        Assert.Equal(0, _unit.SaveCount);
+    }
+
+    [Fact]
     public async Task ValidIndividualAmountsCannotExceedTheAggregateLimit()
     {
         var repository = new MemoryRepository<Authorization>();

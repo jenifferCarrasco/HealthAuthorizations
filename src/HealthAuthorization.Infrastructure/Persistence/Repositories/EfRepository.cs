@@ -54,12 +54,12 @@ internal class EfRepository<TEntity> : IRepositoryAsync<TEntity>
     public Task<bool> ExistsAsync(Guid id, CancellationToken cancellationToken) =>
         Entities.AsNoTracking().AnyAsync(entity => entity.Id == id, cancellationToken);
 
-    public async Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
+    public async Task<bool> ExistAllAsync(IReadOnlyCollection<Guid> ids, Expression<Func<TEntity, bool>> predicate, CancellationToken cancellationToken)
     {
         foreach (var keys in ids.Distinct().Chunk(500))
         {
             var count = await Entities.AsNoTracking()
-                .CountAsync(entity => keys.Contains(entity.Id), cancellationToken);
+                .Where(predicate).CountAsync(entity => keys.Contains(entity.Id), cancellationToken);
             if (count != keys.Length)
             {
                 return false;

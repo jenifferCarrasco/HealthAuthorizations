@@ -1,11 +1,16 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using HealthAuthorization.API.Controllers;
 using HealthAuthorization.API.Errors;
+using HealthAuthorization.API.Notifications;
+using HealthAuthorization.API.Security;
 using HealthAuthorization.Application;
 using HealthAuthorization.Application.Common;
 using HealthAuthorization.Application.Features.Authorizations.Commands;
+using HealthAuthorization.Application.Features.Authorizations.Notifications;
+using HealthAuthorization.Infrastructure;
 using MediatR;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -15,6 +20,7 @@ namespace HealthAuthorization.IntegrationTests.Api;
 
 public class AuthorizationIdempotencyHttpTests
 {
+    private readonly DevelopmentJwtTestTokens _tokens = new DevelopmentJwtTestTokens();
     private const string HeaderName = "Idempotency-Key";
     private static readonly object Input = new
     {
@@ -27,7 +33,7 @@ public class AuthorizationIdempotencyHttpTests
     {
         var handler = new CreateHandlerStub();
         await using var app = await StartApiAsync(handler);
-        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var client = CreateClient(app);
 
         var invalidHeaders = new[]
         {
@@ -60,7 +66,7 @@ public class AuthorizationIdempotencyHttpTests
     {
         var handler = new CreateHandlerStub();
         await using var app = await StartApiAsync(handler);
-        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var client = CreateClient(app);
         var key = Guid.NewGuid();
 
         using var first = await PostAsync(client, new[] { key.ToString() });
@@ -83,7 +89,7 @@ public class AuthorizationIdempotencyHttpTests
             Error = new ConflictException("La clave de idempotencia ya se utilizó con datos diferentes.")
         };
         await using var app = await StartApiAsync(handler);
-        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var client = CreateClient(app);
 
         using var response = await PostAsync(client, new[] { Guid.NewGuid().ToString() });
 
@@ -98,7 +104,7 @@ public class AuthorizationIdempotencyHttpTests
     {
         var handler = new CreateHandlerStub();
         await using var app = await StartApiAsync(handler);
-        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var client = CreateClient(app);
         var input = new { affiliateId = Guid.NewGuid(), services = Array.Empty<object>() };
 
         using var response = await PostAsync(client, new[] { Guid.NewGuid().ToString() }, input);
@@ -107,22 +113,37 @@ public class AuthorizationIdempotencyHttpTests
         Assert.Equal(0, handler.Calls);
     }
 
-    private static async Task<WebApplication> StartApiAsync(CreateHandlerStub handler)
+    private async Task<WebApplication> StartApiAsync(CreateHandlerStub handler)
     {
-        var builder = WebApplication.CreateBuilder();
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
+        _tokens.Configure(builder);
         builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddInfrastructure("Server=localhost;Database=HealthAuthorizationModelOnly;Integrated Security=true;Encrypt=true");
+        builder.AddApiSecurity();
         builder.Services.AddControllers().AddApplicationPart(typeof(AuthorizationsController).Assembly);
         builder.Services.AddProblemDetails();
         builder.Services.AddExceptionHandler<ApiExceptionHandler>();
         builder.Services.AddOpenApi();
         builder.Services.AddApplication();
+        builder.Services.AddSignalR();
+        builder.Services.AddSingleton<IAuthorizationNotificationService, AuthorizationNotificationService>();
         builder.Services.AddSingleton<IRequestHandler<CreateAuthorizationCommand, Guid>>(handler);
         var app = builder.Build();
         app.UseExceptionHandler();
+        app.UseAuthentication();
+        app.UseAuthorization();
         app.MapControllers();
         app.MapOpenApi();
         await app.StartAsync();
         return app;
+    }
+
+    private HttpClient CreateClient(WebApplication app)
+    {
+        var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        client.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", _tokens.Create("Operator", Guid.NewGuid().ToString()));
+        return client;
     }
 
     private static async Task<HttpResponseMessage> PostAsync(HttpClient client, string[] values, object? input = null)

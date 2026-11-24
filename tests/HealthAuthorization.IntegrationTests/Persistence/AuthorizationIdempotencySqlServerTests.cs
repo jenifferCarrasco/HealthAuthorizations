@@ -1,4 +1,5 @@
 using HealthAuthorization.Application;
+using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
 using HealthAuthorization.Application.Features.Authorizations;
 using HealthAuthorization.Application.Features.Authorizations.Commands;
@@ -18,6 +19,7 @@ public class AuthorizationIdempotencySqlServerTests
 {
     public const string ConnectionVariable = "HEALTHAUTHORIZATION_IDEMPOTENCY_TEST_CONNECTION";
     private const string TestDatabase = "HealthAuthorizationIdempotencyTests";
+    private static readonly Guid TestUserId = Guid.Parse("11111111-1111-4111-8111-111111111111");
 
     [SqlServerIdempotencyTheory]
     [InlineData(false)]
@@ -34,6 +36,7 @@ public class AuthorizationIdempotencySqlServerTests
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddApplication().AddInfrastructure(connection.ConnectionString);
+        services.AddScoped<ICurrentUser, TestCurrentUser>();
         services.AddSingleton<IAuthorizationNotificationService>(notifications);
         services.ConfigureDbContext<HealthAuthorizationDbContext>(options => options.AddInterceptors(barrier));
         await using var provider = services.BuildServiceProvider();
@@ -55,7 +58,7 @@ public class AuthorizationIdempotencySqlServerTests
 
         var stored = await context.Authorizations.AsNoTracking()
             .Include(authorization => authorization.Details)
-            .SingleAsync(authorization => authorization.IdempotencyScopeId == Guid.Empty &&
+            .SingleAsync(authorization => authorization.IdempotencyScopeId == TestUserId &&
                 authorization.IdempotencyKey == key, token);
 
         Assert.Single(stored.Details);
@@ -111,6 +114,11 @@ public class AuthorizationIdempotencySqlServerTests
     private static bool TracksAuthorization(HealthAuthorizationDbContext context)
     {
         return context.ChangeTracker.Entries().Any(entry => entry.Entity is Authorization or AuthorizationDetail);
+    }
+
+    private class TestCurrentUser : ICurrentUser
+    {
+        public Guid? UserId => TestUserId;
     }
 
     private class ConcurrentInsertBarrier : SaveChangesInterceptor

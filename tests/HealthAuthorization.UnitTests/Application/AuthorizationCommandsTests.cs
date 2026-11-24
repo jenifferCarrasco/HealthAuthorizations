@@ -11,12 +11,31 @@ namespace HealthAuthorization.UnitTests.Application;
 
 public sealed class AuthorizationCommandsTests
 {
+    private static readonly Guid TestUserId = Guid.Parse("11111111-1111-4111-8111-111111111111");
     private readonly Affiliate _affiliate = new();
     private readonly Provider _provider = new();
     private readonly ServiceType _serviceType = new();
     private readonly UnitOfWorkStub _unit = new();
     private readonly NotificationServiceStub _notifications = new();
     private readonly FixedClock _clock = new();
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public async Task AnInvalidCurrentUserCannotCreateAnAuthorization(string? userId)
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var currentUser = new CurrentUserStub { UserId = userId is null ? null : Guid.Parse(userId) };
+        var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, currentUser));
+
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            handler.Handle(new CreateAuthorizationCommand(Input(Service(100m)), Guid.NewGuid()), CancellationToken.None));
+
+        Assert.Empty(repository.Items);
+        Assert.Equal(0, _unit.SaveCount);
+        Assert.Empty(_notifications.Created);
+    }
 
     [Fact]
     public async Task ReplayPreservesTheOriginalHashAfterUpdateAndDoesNotNotifyAgain()
@@ -64,16 +83,16 @@ public sealed class AuthorizationCommandsTests
     public async Task DifferentKeysAndScopesCreateIndependentAuthorizations()
     {
         var repository = new MemoryRepository<Authorization>();
-        var local = CreateHandler(repository);
-        var authenticated = CreateHandler(repository, Guid.NewGuid());
+        var firstUser = CreateHandler(repository);
+        var secondUser = CreateHandler(repository, Guid.NewGuid());
         var command = new CreateAuthorizationCommand(Input(Service(100m)), Guid.NewGuid());
-        var original = await local.Handle(command, CancellationToken.None);
-        var otherKey = await local.Handle(new CreateAuthorizationCommand(command.Input, Guid.NewGuid()), CancellationToken.None);
-        var otherScope = await authenticated.Handle(command, CancellationToken.None);
+        var original = await firstUser.Handle(command, CancellationToken.None);
+        var otherKey = await firstUser.Handle(new CreateAuthorizationCommand(command.Input, Guid.NewGuid()), CancellationToken.None);
+        var otherScope = await secondUser.Handle(command, CancellationToken.None);
 
         Assert.Equal(3, new HashSet<Guid> { original, otherKey, otherScope }.Count);
-        Assert.Equal(otherScope, await authenticated.Handle(command, CancellationToken.None));
-        Assert.Equal(original, await local.Handle(command, CancellationToken.None));
+        Assert.Equal(otherScope, await secondUser.Handle(command, CancellationToken.None));
+        Assert.Equal(original, await firstUser.Handle(command, CancellationToken.None));
         Assert.Equal(3, _unit.SaveCount);
         Assert.Equal(3, _notifications.Created.Count);
     }
@@ -381,12 +400,12 @@ public sealed class AuthorizationCommandsTests
     private CreateAuthorizationCommandHandler CreateHandler(MemoryRepository<Authorization> repository, Guid? userId = null)
     {
         return new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
-            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub { UserId = userId }));
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub { UserId = userId ?? TestUserId }));
     }
 
     private class CurrentUserStub : HealthAuthorization.Application.Abstractions.ICurrentUser
     {
-        public Guid? UserId { get; set; }
+        public Guid? UserId { get; set; } = TestUserId;
     }
 
     private class FixedClock : TimeProvider

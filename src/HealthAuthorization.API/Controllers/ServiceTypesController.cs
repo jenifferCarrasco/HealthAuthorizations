@@ -2,12 +2,15 @@ using HealthAuthorization.API.Contracts;
 using HealthAuthorization.Application.Features.ServiceTypes;
 using HealthAuthorization.Application.Features.ServiceTypes.Commands;
 using HealthAuthorization.Application.Features.ServiceTypes.Queries;
+using HealthAuthorization.API.Security;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HealthAuthorization.API.Controllers;
 
 [ApiController]
+[Authorize(Policy = SecurityConfiguration.BusinessAccess)]
 [Route("api/service-types")]
 public class ServiceTypesController : ControllerBase
 {
@@ -35,6 +38,7 @@ public class ServiceTypesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> Create([FromBody] ServiceTypeInput input, CancellationToken cancellationToken)
     {
         var command = new CreateServiceTypeCommand(input);
@@ -43,6 +47,7 @@ public class ServiceTypesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> Update(
         [FromRoute] Guid id, [FromBody] ServiceTypeInput input, CancellationToken cancellationToken)
     {
@@ -52,6 +57,7 @@ public class ServiceTypesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> Delete([FromRoute] Guid id, CancellationToken cancellationToken)
     {
         var command = new DeleteServiceTypeCommand(id);
@@ -60,6 +66,7 @@ public class ServiceTypesController : ControllerBase
     }
 
     [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> ChangeStatus(
         [FromRoute] Guid id, [FromBody] ChangeStatusRequest input, CancellationToken cancellationToken)
     {

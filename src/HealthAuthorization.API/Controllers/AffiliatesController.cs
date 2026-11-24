@@ -2,12 +2,15 @@ using HealthAuthorization.API.Contracts;
 using HealthAuthorization.Application.Features.Affiliates;
 using HealthAuthorization.Application.Features.Affiliates.Commands;
 using HealthAuthorization.Application.Features.Affiliates.Queries;
+using HealthAuthorization.API.Security;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HealthAuthorization.API.Controllers;
 
 [ApiController]
+[Authorize(Policy = SecurityConfiguration.BusinessAccess)]
 [Route("api/affiliates")]
 public class AffiliatesController : ControllerBase
 {
@@ -35,6 +38,7 @@ public class AffiliatesController : ControllerBase
     }
 
     [HttpPost]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> Create([FromBody] AffiliateInput input, CancellationToken cancellationToken)
     {
         var command = new CreateAffiliateCommand(input);
@@ -43,6 +47,7 @@ public class AffiliatesController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> Update(
         [FromRoute] Guid id, [FromBody] AffiliateInput input, CancellationToken cancellationToken)
     {
@@ -52,6 +57,7 @@ public class AffiliatesController : ControllerBase
     }
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> Delete([FromRoute] Guid id, CancellationToken cancellationToken)
     {
         var command = new DeleteAffiliateCommand(id);
@@ -60,6 +66,7 @@ public class AffiliatesController : ControllerBase
     }
 
     [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> ChangeStatus(
         [FromRoute] Guid id, [FromBody] ChangeStatusRequest input, CancellationToken cancellationToken)
     {

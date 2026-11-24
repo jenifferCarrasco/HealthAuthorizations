@@ -17,9 +17,15 @@ public class AuthorizationIdempotencyService
 
     internal Authorization Prepare(AuthorizationInput input, Guid key)
     {
+        var userId = _currentUser.UserId;
+        if (userId is null || userId == Guid.Empty)
+        {
+            throw new UnauthorizedAccessException("La creación de autorizaciones requiere un identificador de usuario válido.");
+        }
+
         return new Authorization
         {
-            IdempotencyScopeId = _currentUser.UserId ?? Guid.Empty,
+            IdempotencyScopeId = userId,
             IdempotencyKey = key,
             IdempotencyRequestHash = AuthorizationRequestHash.Calculate(input)
         };

@@ -1,6 +1,7 @@
 using HealthAuthorization.API.Errors;
 using HealthAuthorization.API.Hubs;
 using HealthAuthorization.API.Notifications;
+using HealthAuthorization.API.Security;
 using HealthAuthorization.Application;
 using HealthAuthorization.Application.Features.Authorizations.Notifications;
 using HealthAuthorization.Infrastructure;
@@ -15,16 +16,19 @@ if (string.IsNullOrWhiteSpace(connectionString))
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(connectionString);
+builder.AddApiSecurity();
 builder.Services.AddControllers();
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
-builder.Services.AddOpenApi();
+builder.Services.AddApiOpenApi();
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IAuthorizationNotificationService, AuthorizationNotificationService>();
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseAuthentication();
+app.UseAuthorization();
 
 if (app.Environment.IsDevelopment())
 {
@@ -36,6 +40,9 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapControllers();
-app.MapHub<AuthorizationHub>("/hubs/authorizations");
+app.MapHub<AuthorizationHub>(AuthorizationHub.Route, options =>
+{
+    options.CloseOnAuthenticationExpiration = true;
+});
 
 app.Run();

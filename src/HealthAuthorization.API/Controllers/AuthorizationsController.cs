@@ -4,12 +4,15 @@ using HealthAuthorization.API.Filters;
 using HealthAuthorization.Application.Features.Authorizations;
 using HealthAuthorization.Application.Features.Authorizations.Commands;
 using HealthAuthorization.Application.Features.Authorizations.Queries;
+using HealthAuthorization.API.Security;
 using MediatR;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HealthAuthorization.API.Controllers;
 
 [ApiController]
+[Authorize(Policy = SecurityConfiguration.BusinessAccess)]
 [Route("api/authorizations")]
 public class AuthorizationsController : ControllerBase
 {
@@ -57,6 +60,7 @@ public class AuthorizationsController : ControllerBase
     }
 
     [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = SecurityConfiguration.Administrator)]
     public async Task<IActionResult> ChangeStatus(
         [FromRoute] Guid id, [FromBody] ChangeStatusRequest input, CancellationToken cancellationToken)
     {

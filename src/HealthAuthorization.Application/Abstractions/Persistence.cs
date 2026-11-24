@@ -12,6 +12,8 @@ public interface IRepositoryAsync<TEntity> where TEntity : BaseEntity
     Task<bool> AnyAsync(Expression<Func<TEntity, bool>> predicate, bool includeDeleted, CancellationToken cancellationToken);
     Task<TResult?> FindAsync<TResult>(Guid id, Expression<Func<TEntity, TResult>> projection,
         CancellationToken cancellationToken) where TResult : class;
+    Task<TResult?> FindAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
+        Expression<Func<TEntity, TResult>> projection, CancellationToken cancellationToken) where TResult : class;
     Task<Page<TResult>> ListAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
         Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>> order,
         Expression<Func<TEntity, TResult>> projection, int pageNumber, int pageSize, CancellationToken cancellationToken);

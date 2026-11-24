@@ -12,6 +12,7 @@ public static class DependencyInjection
     {
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<AuthorizationWriter>();
+        services.AddScoped<AuthorizationIdempotencyService>();
         services.TryAddScoped<IAuthorizationReactivationPolicy, AuthorizationReactivationDisabled>();
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         services.AddMediatR(configuration =>

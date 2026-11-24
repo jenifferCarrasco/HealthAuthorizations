@@ -132,6 +132,15 @@ namespace HealthAuthorization.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("CreatedDate")
                         .HasColumnType("datetimeoffset");
 
+                    b.Property<Guid?>("IdempotencyKey")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<byte[]>("IdempotencyRequestHash")
+                        .HasColumnType("binary(32)");
+
+                    b.Property<Guid?>("IdempotencyScopeId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid?>("IntermediaryId")
                         .HasColumnType("uniqueidentifier");
 
@@ -159,13 +168,21 @@ namespace HealthAuthorization.Infrastructure.Persistence.Migrations
                     b.HasIndex("CreatedDate", "Id")
                         .IsDescending();
 
+                    b.HasIndex("IdempotencyScopeId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Authorizations_IdempotencyScope_Key")
+                        .HasFilter("[IdempotencyKey] IS NOT NULL");
+
                     b.HasIndex("AffiliateId", "CreatedDate", "Id")
                         .IsDescending(false, true, true);
 
                     b.HasIndex("IsActive", "CreatedDate", "Id")
                         .IsDescending(false, true, true);
 
-                    b.ToTable("Authorizations");
+                    b.ToTable("Authorizations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Authorizations_Idempotency", "([IdempotencyScopeId] IS NULL AND [IdempotencyKey] IS NULL AND [IdempotencyRequestHash] IS NULL) OR ([IdempotencyScopeId] IS NOT NULL AND [IdempotencyKey] IS NOT NULL AND [IdempotencyRequestHash] IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("HealthAuthorization.Domain.Entities.AuthorizationDetail", b =>

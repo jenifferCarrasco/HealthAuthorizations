@@ -33,6 +33,9 @@ public sealed class SqlServerPersistenceTests
         Assert.Contains("CK_Affiliates_Document", sql);
         Assert.Contains("CK_AuthorizationDetails_Amounts", sql);
         Assert.Contains("rowversion", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[IdempotencyRequestHash] binary(32) NULL", sql);
+        Assert.Contains("CK_Authorizations_Idempotency", sql);
+        Assert.Contains("CREATE UNIQUE INDEX [UX_Authorizations_IdempotencyScope_Key] ON [Authorizations] ([IdempotencyScopeId], [IdempotencyKey]) WHERE [IdempotencyKey] IS NOT NULL", sql);
         Assert.Contains("DEMO-001", sql);
         Assert.DoesNotContain("ON DELETE CASCADE", sql);
         Assert.Equal(8, context.Model.GetEntityTypes().Count());

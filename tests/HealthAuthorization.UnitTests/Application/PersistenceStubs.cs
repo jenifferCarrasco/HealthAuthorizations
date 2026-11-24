@@ -6,7 +6,7 @@ using HealthAuthorization.Domain.Common.Entities;
 
 namespace HealthAuthorization.UnitTests.Application;
 
-internal sealed class MemoryRepository<TEntity> : IRepositoryAsync<TEntity> where TEntity : BaseEntity
+internal class MemoryRepository<TEntity> : IRepositoryAsync<TEntity> where TEntity : BaseEntity
 {
     public MemoryRepository(params TEntity[] items) => Items = [.. items];
 
@@ -19,7 +19,11 @@ internal sealed class MemoryRepository<TEntity> : IRepositoryAsync<TEntity> wher
 
     public Task<TResult?> FindAsync<TResult>(Guid id, Expression<Func<TEntity, TResult>> projection,
         CancellationToken cancellationToken) where TResult : class =>
-        Task.FromResult(Visible.Where(item => item.Id == id).Select(projection.Compile()).SingleOrDefault());
+        FindAsync(item => item.Id == id, projection, cancellationToken);
+
+    public Task<TResult?> FindAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
+        Expression<Func<TEntity, TResult>> projection, CancellationToken cancellationToken) where TResult : class =>
+        Task.FromResult(Visible.Where(predicate.Compile()).Select(projection.Compile()).SingleOrDefault());
 
     public Task<Page<TResult>> ListAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
         Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>> order, Expression<Func<TEntity, TResult>> projection,

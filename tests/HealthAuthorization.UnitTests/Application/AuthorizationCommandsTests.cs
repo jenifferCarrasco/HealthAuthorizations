@@ -18,6 +18,86 @@ public sealed class AuthorizationCommandsTests
     private readonly NotificationServiceStub _notifications = new();
     private readonly FixedClock _clock = new();
 
+    [Fact]
+    public async Task ReplayPreservesTheOriginalHashAfterUpdateAndDoesNotNotifyAgain()
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var create = CreateHandler(repository);
+        var original = new CreateAuthorizationCommand(Input(Service(100m)), Guid.NewGuid());
+        var id = await create.Handle(original, CancellationToken.None);
+        var stored = Assert.Single(repository.Items);
+        var hash = Assert.IsType<byte[]>(stored.IdempotencyRequestHash).ToArray();
+
+        var update = new UpdateAuthorizationCommandHandler(repository, CreateWriter(), _unit);
+        await update.Handle(new UpdateAuthorizationCommand(id, Input(Service(200m, stored.Details.Single().Id))),
+            CancellationToken.None);
+
+        Assert.Equal(id, await create.Handle(original, CancellationToken.None));
+        Assert.Equal(hash, stored.IdempotencyRequestHash);
+        Assert.Equal(200m, stored.TotalClaimedAmount);
+        Assert.Equal(2, _unit.SaveCount);
+        Assert.Single(_notifications.Created);
+    }
+
+    [Fact]
+    public async Task ReplayNormalizesOrderAndDecimalScaleAndPreservesRepeatedServices()
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var handler = CreateHandler(repository);
+        var key = Guid.NewGuid();
+        var first = new CreateAuthorizationCommand(Input(Service(100m), Service(25m), Service(25m)), key);
+        var reordered = new CreateAuthorizationCommand(Input(Service(25.00m), Service(100.00m), Service(25m)), key);
+        var id = await handler.Handle(first, CancellationToken.None);
+
+        Assert.Equal(id, await handler.Handle(reordered, CancellationToken.None));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            handler.Handle(new CreateAuthorizationCommand(Input(Service(25m), Service(100m)), key), CancellationToken.None));
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            handler.Handle(new CreateAuthorizationCommand(Input(Service(25m), Service(100.01m), Service(25m)), key),
+                CancellationToken.None));
+        Assert.Single(repository.Items);
+        Assert.Equal(1, _unit.SaveCount);
+        Assert.Single(_notifications.Created);
+    }
+
+    [Fact]
+    public async Task DifferentKeysAndScopesCreateIndependentAuthorizations()
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var local = CreateHandler(repository);
+        var authenticated = CreateHandler(repository, Guid.NewGuid());
+        var command = new CreateAuthorizationCommand(Input(Service(100m)), Guid.NewGuid());
+        var original = await local.Handle(command, CancellationToken.None);
+        var otherKey = await local.Handle(new CreateAuthorizationCommand(command.Input, Guid.NewGuid()), CancellationToken.None);
+        var otherScope = await authenticated.Handle(command, CancellationToken.None);
+
+        Assert.Equal(3, new HashSet<Guid> { original, otherKey, otherScope }.Count);
+        Assert.Equal(otherScope, await authenticated.Handle(command, CancellationToken.None));
+        Assert.Equal(original, await local.Handle(command, CancellationToken.None));
+        Assert.Equal(3, _unit.SaveCount);
+        Assert.Equal(3, _notifications.Created.Count);
+    }
+
+    [Fact]
+    public async Task FailedValidationBeforeSavingLeavesTheKeyAvailable()
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var handler = CreateHandler(repository);
+        var key = Guid.NewGuid();
+        var invalid = new CreateAuthorizationCommand(Input(new AuthorizationServiceInput(
+            Guid.NewGuid(), _serviceType.Id, 100m)), key);
+
+        await Assert.ThrowsAsync<NotFoundException>(() => handler.Handle(invalid, CancellationToken.None));
+        Assert.Empty(repository.Items);
+        Assert.Equal(0, _unit.SaveCount);
+        Assert.Empty(_notifications.Created);
+
+        await handler.Handle(new CreateAuthorizationCommand(Input(Service(100m)), key), CancellationToken.None);
+        Assert.Single(repository.Items);
+        Assert.Equal(1, _unit.SaveCount);
+        Assert.Single(_notifications.Created);
+    }
+
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
@@ -25,8 +105,8 @@ public sealed class AuthorizationCommandsTests
     {
         var repository = new MemoryRepository<Authorization>();
         var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
-            NullLogger<CreateAuthorizationCommandHandler>.Instance);
-        var command = new CreateAuthorizationCommand(Input(Enumerable.Repeat(Service(100m), count).ToArray()));
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub()));
+        var command = new CreateAuthorizationCommand(Input(Enumerable.Repeat(Service(100m), count).ToArray()), Guid.NewGuid());
 
         Assert.True(new CreateAuthorizationCommandValidator().Validate(command).IsValid);
         _notifications.BeforePublish = () => Assert.Equal(1, _unit.SaveCount);
@@ -50,7 +130,7 @@ public sealed class AuthorizationCommandsTests
     public void RejectsCreationWithoutServicesAndRemovalOfTheLastService()
     {
         var input = Input();
-        Assert.False(new CreateAuthorizationCommandValidator().Validate(new CreateAuthorizationCommand(input)).IsValid);
+        Assert.False(new CreateAuthorizationCommandValidator().Validate(new CreateAuthorizationCommand(input, Guid.NewGuid())).IsValid);
         Assert.False(new UpdateAuthorizationCommandValidator().Validate(new UpdateAuthorizationCommand(Guid.NewGuid(), input)).IsValid);
     }
 
@@ -62,11 +142,11 @@ public sealed class AuthorizationCommandsTests
         var repository = new MemoryRepository<Authorization>(existing);
         var writer = CreateWriter();
         var create = new CreateAuthorizationCommandHandler(repository, writer, _unit, _notifications, _clock,
-            NullLogger<CreateAuthorizationCommandHandler>.Instance);
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub()));
         var update = new UpdateAuthorizationCommandHandler(repository, writer, _unit);
 
         await Assert.ThrowsAsync<ValidationException>(() =>
-            create.Handle(new CreateAuthorizationCommand(Input()), CancellationToken.None));
+            create.Handle(new CreateAuthorizationCommand(Input(), Guid.NewGuid()), CancellationToken.None));
         await Assert.ThrowsAsync<ValidationException>(() =>
             update.Handle(new UpdateAuthorizationCommand(existing.Id, Input()), CancellationToken.None));
 
@@ -82,7 +162,7 @@ public sealed class AuthorizationCommandsTests
     [InlineData(1001)]
     public void RejectsInvalidAmounts(int thousandths)
     {
-        var command = new CreateAuthorizationCommand(Input(Service(thousandths / 1000m)));
+        var command = new CreateAuthorizationCommand(Input(Service(thousandths / 1000m)), Guid.NewGuid());
         Assert.Contains(new CreateAuthorizationCommandValidator().Validate(command).Errors,
             error => error.PropertyName.Contains(nameof(AuthorizationServiceInput.ClaimedAmount)));
     }
@@ -187,11 +267,11 @@ public sealed class AuthorizationCommandsTests
     {
         var repository = new MemoryRepository<Authorization>();
         var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
-            NullLogger<CreateAuthorizationCommandHandler>.Instance);
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub()));
         var input = Input(new AuthorizationServiceInput(Guid.NewGuid(), _serviceType.Id, 100m));
 
         await Assert.ThrowsAsync<NotFoundException>(() =>
-            handler.Handle(new CreateAuthorizationCommand(input), CancellationToken.None));
+            handler.Handle(new CreateAuthorizationCommand(input, Guid.NewGuid()), CancellationToken.None));
 
         Assert.Empty(repository.Items);
         Assert.Equal(0, _unit.SaveCount);
@@ -287,8 +367,8 @@ public sealed class AuthorizationCommandsTests
         }
 
         var handler = new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
-            NullLogger<CreateAuthorizationCommandHandler>.Instance);
-        return await handler.Handle(new CreateAuthorizationCommand(Input(Service(100m))), CancellationToken.None);
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub()));
+        return await handler.Handle(new CreateAuthorizationCommand(Input(Service(100m)), Guid.NewGuid()), CancellationToken.None);
     }
 
     private ChangeAuthorizationStatusCommandHandler CreateStatusHandler(MemoryRepository<Authorization> repository,
@@ -296,6 +376,17 @@ public sealed class AuthorizationCommandsTests
     {
         return new ChangeAuthorizationStatusCommandHandler(repository, _unit, new TestReactivationPolicy(canReactivate),
             _notifications, _clock, NullLogger<ChangeAuthorizationStatusCommandHandler>.Instance);
+    }
+
+    private CreateAuthorizationCommandHandler CreateHandler(MemoryRepository<Authorization> repository, Guid? userId = null)
+    {
+        return new CreateAuthorizationCommandHandler(repository, CreateWriter(), _unit, _notifications, _clock,
+            NullLogger<CreateAuthorizationCommandHandler>.Instance, new AuthorizationIdempotencyService(repository, new CurrentUserStub { UserId = userId }));
+    }
+
+    private class CurrentUserStub : HealthAuthorization.Application.Abstractions.ICurrentUser
+    {
+        public Guid? UserId { get; set; }
     }
 
     private class FixedClock : TimeProvider

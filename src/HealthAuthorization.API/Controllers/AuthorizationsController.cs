@@ -1,4 +1,6 @@
+using System.ComponentModel.DataAnnotations;
 using HealthAuthorization.API.Contracts;
+using HealthAuthorization.API.Filters;
 using HealthAuthorization.Application.Features.Authorizations;
 using HealthAuthorization.Application.Features.Authorizations.Commands;
 using HealthAuthorization.Application.Features.Authorizations.Queries;
@@ -35,9 +37,12 @@ public class AuthorizationsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] AuthorizationInput input, CancellationToken cancellationToken)
+    [IdempotencyKeyFilter(nameof(idempotencyKey))]
+    public async Task<IActionResult> Create([FromBody] AuthorizationInput input,
+        [FromHeader(Name = IdempotencyKeyFilter.HeaderName), Required] Guid idempotencyKey,
+        CancellationToken cancellationToken)
     {
-        var command = new CreateAuthorizationCommand(input);
+        var command = new CreateAuthorizationCommand(input, idempotencyKey);
         var id = await _mediator.Send(command, cancellationToken);
         return CreatedAtAction(nameof(GetById), new { id }, new { id });
     }

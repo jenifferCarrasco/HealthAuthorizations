@@ -31,7 +31,11 @@ internal class EfRepository<TEntity> : IRepositoryAsync<TEntity>
 
     public Task<TResult?> FindAsync<TResult>(Guid id, Expression<Func<TEntity, TResult>> projection,
         CancellationToken cancellationToken) where TResult : class =>
-        Entities.AsNoTracking().Where(entity => entity.Id == id).Select(projection).SingleOrDefaultAsync(cancellationToken);
+        FindAsync(entity => entity.Id == id, projection, cancellationToken);
+
+    public Task<TResult?> FindAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
+        Expression<Func<TEntity, TResult>> projection, CancellationToken cancellationToken) where TResult : class =>
+        Entities.AsNoTracking().Where(predicate).Select(projection).SingleOrDefaultAsync(cancellationToken);
 
     public async Task<Page<TResult>> ListAsync<TResult>(Expression<Func<TEntity, bool>> predicate,
         Func<IQueryable<TEntity>, IOrderedQueryable<TEntity>> order, Expression<Func<TEntity, TResult>> projection,

@@ -7,6 +7,8 @@ public class CreateAuthorizationCommandValidator : AbstractValidator<CreateAutho
 {
     public CreateAuthorizationCommandValidator()
     {
+        RuleFor(command => command.IdempotencyKey).NotEmpty()
+            .WithMessage("La clave de idempotencia es obligatoria.");
         RuleFor(command => command.Input).Cascade(CascadeMode.Stop)
             .NotNull().WithMessage("Los datos de la autorización son obligatorios.")
             .SetValidator(new AuthorizationInputValidator(isCreation: true));

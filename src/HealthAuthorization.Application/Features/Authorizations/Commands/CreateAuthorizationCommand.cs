@@ -9,10 +9,12 @@ namespace HealthAuthorization.Application.Features.Authorizations.Commands;
 public class CreateAuthorizationCommand : IRequest<Guid>
 {
     public AuthorizationInput Input { get; set; }
+    public Guid IdempotencyKey { get; set; }
 
-    public CreateAuthorizationCommand(AuthorizationInput Input)
+    public CreateAuthorizationCommand(AuthorizationInput input, Guid idempotencyKey)
     {
-        this.Input = Input;
+        Input = input;
+        IdempotencyKey = idempotencyKey;
     }
 }
 
@@ -22,12 +24,13 @@ public class CreateAuthorizationCommandHandler : IRequestHandler<CreateAuthoriza
     private readonly AuthorizationWriter _writer;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuthorizationNotificationService _notifications;
+    private readonly AuthorizationIdempotencyService _idempotency;
     private readonly TimeProvider _clock;
     private readonly ILogger<CreateAuthorizationCommandHandler> _logger;
 
     public CreateAuthorizationCommandHandler(IRepositoryAsync<Authorization> authorizations, AuthorizationWriter writer,
         IUnitOfWork unitOfWork, IAuthorizationNotificationService notifications, TimeProvider clock,
-        ILogger<CreateAuthorizationCommandHandler> logger)
+        ILogger<CreateAuthorizationCommandHandler> logger, AuthorizationIdempotencyService idempotency)
     {
         _authorizations = authorizations;
         _writer = writer;
@@ -35,14 +38,32 @@ public class CreateAuthorizationCommandHandler : IRequestHandler<CreateAuthoriza
         _notifications = notifications;
         _clock = clock;
         _logger = logger;
+        _idempotency = idempotency;
     }
 
     public async Task<Guid> Handle(CreateAuthorizationCommand request, CancellationToken cancellationToken)
     {
-        var authorization = new Authorization();
+        var authorization = _idempotency.Prepare(request.Input, request.IdempotencyKey);
+        if (await _idempotency.FindReplayAsync(authorization, cancellationToken) is Guid existingId)
+        {
+            return existingId;
+        }
+
         await _writer.ApplyAsync(authorization, request.Input, cancellationToken);
         _authorizations.Add(authorization);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        try
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (AuthorizationIdempotencyConflictException)
+        {
+            if (await _idempotency.FindReplayAsync(authorization, cancellationToken) is Guid winnerId)
+            {
+                return winnerId;
+            }
+
+            throw;
+        }
 
         try
         {
@@ -61,4 +82,5 @@ public class CreateAuthorizationCommandHandler : IRequestHandler<CreateAuthoriza
 
         return authorization.Id;
     }
+
 }

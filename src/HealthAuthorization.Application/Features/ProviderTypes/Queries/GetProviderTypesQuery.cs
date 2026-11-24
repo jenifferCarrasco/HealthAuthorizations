@@ -6,7 +6,7 @@ using MediatR;
 
 namespace HealthAuthorization.Application.Features.ProviderTypes.Queries;
 
-public class GetProviderTypesQuery : PaginationFilter, IRequest<Page<ProviderTypeDto>>
+public class GetProviderTypesQuery : SearchablePaginationFilter, IRequest<Page<ProviderTypeDto>>
 {
     public bool? IsActive { get; set; }
 }

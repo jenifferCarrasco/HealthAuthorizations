@@ -1,5 +1,6 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using MapsterMapper;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
@@ -21,11 +22,14 @@ public class UpdateProviderTypeCommandHandler : IRequestHandler<UpdateProviderTy
 {
     private readonly IRepositoryAsync<ProviderType> _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public UpdateProviderTypeCommandHandler(IRepositoryAsync<ProviderType> repository, IUnitOfWork unitOfWork)
+    public UpdateProviderTypeCommandHandler(IRepositoryAsync<ProviderType> repository, IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task Handle(UpdateProviderTypeCommand request, CancellationToken cancellationToken)
@@ -37,8 +41,7 @@ public class UpdateProviderTypeCommandHandler : IRequestHandler<UpdateProviderTy
             throw new NotFoundException("El tipo de prestador no existe.");
         }
 
-        entity.Name = request.Input.Name.Trim();
-        entity.Description = InputLimits.NormalizeOptional(request.Input.Description);
+        _mapper.Map(request.Input, entity);
         _repository.Update(entity);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }

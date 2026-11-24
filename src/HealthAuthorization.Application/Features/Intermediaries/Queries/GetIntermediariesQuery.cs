@@ -6,7 +6,7 @@ using MediatR;
 
 namespace HealthAuthorization.Application.Features.Intermediaries.Queries;
 
-public class GetIntermediariesQuery : PaginationFilter, IRequest<Page<IntermediaryDto>>
+public class GetIntermediariesQuery : SearchablePaginationFilter, IRequest<Page<IntermediaryDto>>
 {
     public bool? IsActive { get; set; }
 }

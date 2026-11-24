@@ -6,7 +6,7 @@ using MediatR;
 
 namespace HealthAuthorization.Application.Features.Contractors.Queries;
 
-public class GetContractorsQuery : PaginationFilter, IRequest<Page<ContractorDto>>
+public class GetContractorsQuery : SearchablePaginationFilter, IRequest<Page<ContractorDto>>
 {
     public bool? IsActive { get; set; }
 }

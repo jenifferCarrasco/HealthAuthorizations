@@ -6,7 +6,7 @@ using MediatR;
 
 namespace HealthAuthorization.Application.Features.Affiliates.Queries;
 
-public class GetAffiliatesQuery : PaginationFilter, IRequest<Page<AffiliateDto>>
+public class GetAffiliatesQuery : SearchablePaginationFilter, IRequest<Page<AffiliateDto>>
 {
     public bool? IsActive { get; set; }
 }

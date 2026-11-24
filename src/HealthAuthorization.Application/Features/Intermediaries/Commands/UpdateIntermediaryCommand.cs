@@ -1,5 +1,6 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using MapsterMapper;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
@@ -21,11 +22,14 @@ public class UpdateIntermediaryCommandHandler : IRequestHandler<UpdateIntermedia
 {
     private readonly IRepositoryAsync<Intermediary> _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public UpdateIntermediaryCommandHandler(IRepositoryAsync<Intermediary> repository, IUnitOfWork unitOfWork)
+    public UpdateIntermediaryCommandHandler(IRepositoryAsync<Intermediary> repository, IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task Handle(UpdateIntermediaryCommand request, CancellationToken cancellationToken)
@@ -37,8 +41,7 @@ public class UpdateIntermediaryCommandHandler : IRequestHandler<UpdateIntermedia
             throw new NotFoundException("El intermediario no existe.");
         }
 
-        entity.Name = request.Input.Name.Trim();
-        entity.Identification = request.Input.Identification.Trim();
+        _mapper.Map(request.Input, entity);
         _repository.Update(entity);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }

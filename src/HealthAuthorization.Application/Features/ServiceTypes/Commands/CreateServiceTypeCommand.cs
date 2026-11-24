@@ -1,5 +1,5 @@
 using HealthAuthorization.Application.Abstractions;
-using HealthAuthorization.Application.Common;
+using MapsterMapper;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
@@ -19,18 +19,19 @@ public class CreateServiceTypeCommandHandler : IRequestHandler<CreateServiceType
 {
     private readonly IRepositoryAsync<ServiceType> _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public CreateServiceTypeCommandHandler(IRepositoryAsync<ServiceType> repository, IUnitOfWork unitOfWork)
+    public CreateServiceTypeCommandHandler(IRepositoryAsync<ServiceType> repository, IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task<Guid> Handle(CreateServiceTypeCommand request, CancellationToken cancellationToken)
     {
-        var entity = new ServiceType();
-        entity.Name = request.Input.Name.Trim();
-        entity.Description = InputLimits.NormalizeOptional(request.Input.Description);
+        var entity = _mapper.Map<ServiceType>(request.Input);
         _repository.Add(entity);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return entity.Id;

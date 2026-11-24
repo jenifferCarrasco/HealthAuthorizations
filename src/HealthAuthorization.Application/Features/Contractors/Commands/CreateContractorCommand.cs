@@ -1,5 +1,5 @@
 using HealthAuthorization.Application.Abstractions;
-using HealthAuthorization.Application.Common;
+using MapsterMapper;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
@@ -19,18 +19,19 @@ public class CreateContractorCommandHandler : IRequestHandler<CreateContractorCo
 {
     private readonly IRepositoryAsync<Contractor> _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public CreateContractorCommandHandler(IRepositoryAsync<Contractor> repository, IUnitOfWork unitOfWork)
+    public CreateContractorCommandHandler(IRepositoryAsync<Contractor> repository, IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task<Guid> Handle(CreateContractorCommand request, CancellationToken cancellationToken)
     {
-        var entity = new Contractor();
-        entity.Name = request.Input.Name.Trim();
-        entity.Identification = request.Input.Identification.Trim();
+        var entity = _mapper.Map<Contractor>(request.Input);
         _repository.Add(entity);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return entity.Id;

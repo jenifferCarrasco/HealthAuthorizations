@@ -1,5 +1,6 @@
 using HealthAuthorization.Application.Abstractions;
 using HealthAuthorization.Application.Common;
+using MapsterMapper;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
@@ -21,11 +22,14 @@ public class UpdateContractorCommandHandler : IRequestHandler<UpdateContractorCo
 {
     private readonly IRepositoryAsync<Contractor> _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public UpdateContractorCommandHandler(IRepositoryAsync<Contractor> repository, IUnitOfWork unitOfWork)
+    public UpdateContractorCommandHandler(IRepositoryAsync<Contractor> repository, IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task Handle(UpdateContractorCommand request, CancellationToken cancellationToken)
@@ -37,8 +41,7 @@ public class UpdateContractorCommandHandler : IRequestHandler<UpdateContractorCo
             throw new NotFoundException("El contratante no existe.");
         }
 
-        entity.Name = request.Input.Name.Trim();
-        entity.Identification = request.Input.Identification.Trim();
+        _mapper.Map(request.Input, entity);
         _repository.Update(entity);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }

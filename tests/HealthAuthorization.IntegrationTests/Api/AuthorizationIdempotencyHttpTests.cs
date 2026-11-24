@@ -28,6 +28,61 @@ public class AuthorizationIdempotencyHttpTests
         services = new[] { new { providerId = Guid.NewGuid(), serviceTypeId = Guid.NewGuid(), claimedAmount = 100m } }
     };
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RequiresClaimedAmountButAcceptsExplicitZero(bool update)
+    {
+        var create = new CreateHandlerStub();
+        var edit = new UpdateHandlerStub();
+        await using var app = await StartApiAsync(create, edit);
+        using var client = CreateClient(app);
+        var affiliateId = Guid.NewGuid();
+        var providerId = Guid.NewGuid();
+        var serviceTypeId = Guid.NewGuid();
+        var authorizationId = Guid.NewGuid();
+        var key = new[] { Guid.NewGuid().ToString() };
+        var omitted = new { affiliateId, services = new[] { new { providerId, serviceTypeId } } };
+        var zero = new { affiliateId, services = new[] { new { providerId, serviceTypeId, claimedAmount = 0m } } };
+
+        using var rejected = update
+            ? await client.PutAsJsonAsync($"/api/authorizations/{authorizationId}", omitted)
+            : await PostAsync(client, key, omitted);
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Equal(0, create.Calls);
+        Assert.Null(edit.LastClaimedAmount);
+
+        using var accepted = update
+            ? await client.PutAsJsonAsync($"/api/authorizations/{authorizationId}", zero)
+            : await PostAsync(client, key, zero);
+        Assert.Equal(update ? HttpStatusCode.NoContent : HttpStatusCode.Created, accepted.StatusCode);
+        Assert.Equal(0m, update ? edit.LastClaimedAmount : create.LastClaimedAmount);
+    }
+
+    [Fact]
+    public async Task OpenApiAdvertisesSearchOnlyWhereItHasAnEffect()
+    {
+        await using var app = await StartApiAsync(new CreateHandlerStub());
+        using var client = CreateClient(app);
+        using var json = JsonDocument.Parse(await client.GetStringAsync("/openapi/v1.json"));
+        var paths = json.RootElement.GetProperty("paths");
+        var authorizations = GetListParameterNames(paths, "/api/authorizations");
+
+        Assert.DoesNotContain("search", authorizations, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("pageNumber", authorizations, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("affiliateId", authorizations, StringComparer.OrdinalIgnoreCase);
+        foreach (var catalog in new[] { "affiliates", "contractors", "intermediaries", "providers", "provider-types", "service-types" })
+        {
+            Assert.Contains("search", GetListParameterNames(paths, $"/api/{catalog}"), StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static string[] GetListParameterNames(JsonElement paths, string path)
+    {
+        return paths.GetProperty(path).GetProperty("get").GetProperty("parameters").EnumerateArray()
+            .Select(parameter => parameter.GetProperty("name").GetString()!).ToArray();
+    }
+
     [Fact]
     public async Task RejectsInvalidHeadersAndDocumentsTheRequiredHeader()
     {
@@ -113,7 +168,7 @@ public class AuthorizationIdempotencyHttpTests
         Assert.Equal(0, handler.Calls);
     }
 
-    private async Task<WebApplication> StartApiAsync(CreateHandlerStub handler)
+    private async Task<WebApplication> StartApiAsync(CreateHandlerStub handler, UpdateHandlerStub? update = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Development" });
         _tokens.Configure(builder);
@@ -128,6 +183,10 @@ public class AuthorizationIdempotencyHttpTests
         builder.Services.AddSignalR();
         builder.Services.AddSingleton<IAuthorizationNotificationService, AuthorizationNotificationService>();
         builder.Services.AddSingleton<IRequestHandler<CreateAuthorizationCommand, Guid>>(handler);
+        if (update is not null)
+        {
+            builder.Services.AddSingleton<IRequestHandler<UpdateAuthorizationCommand>>(update);
+        }
         var app = builder.Build();
         app.UseExceptionHandler();
         app.UseAuthentication();
@@ -164,18 +223,31 @@ public class AuthorizationIdempotencyHttpTests
 
         public int Calls { get; private set; }
         public Guid LastKey { get; private set; }
+        public decimal? LastClaimedAmount { get; private set; }
         public ConflictException? Error { get; set; }
 
         public Task<Guid> Handle(CreateAuthorizationCommand request, CancellationToken cancellationToken)
         {
             Calls++;
             LastKey = request.IdempotencyKey;
+            LastClaimedAmount = request.Input.Services[0].ClaimedAmount;
             if (Error is not null)
             {
                 return Task.FromException<Guid>(Error);
             }
 
             return Task.FromResult(_authorizationId);
+        }
+    }
+
+    private class UpdateHandlerStub : IRequestHandler<UpdateAuthorizationCommand>
+    {
+        public decimal? LastClaimedAmount { get; private set; }
+
+        public Task Handle(UpdateAuthorizationCommand request, CancellationToken cancellationToken)
+        {
+            LastClaimedAmount = request.Input.Services[0].ClaimedAmount;
+            return Task.CompletedTask;
         }
     }
 }

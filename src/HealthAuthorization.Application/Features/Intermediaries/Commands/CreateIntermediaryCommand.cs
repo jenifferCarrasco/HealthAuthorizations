@@ -1,5 +1,5 @@
 using HealthAuthorization.Application.Abstractions;
-using HealthAuthorization.Application.Common;
+using MapsterMapper;
 using HealthAuthorization.Domain.Entities;
 using MediatR;
 
@@ -19,18 +19,19 @@ public class CreateIntermediaryCommandHandler : IRequestHandler<CreateIntermedia
 {
     private readonly IRepositoryAsync<Intermediary> _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
 
-    public CreateIntermediaryCommandHandler(IRepositoryAsync<Intermediary> repository, IUnitOfWork unitOfWork)
+    public CreateIntermediaryCommandHandler(IRepositoryAsync<Intermediary> repository, IUnitOfWork unitOfWork,
+        IMapper mapper)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _mapper = mapper;
     }
 
     public async Task<Guid> Handle(CreateIntermediaryCommand request, CancellationToken cancellationToken)
     {
-        var entity = new Intermediary();
-        entity.Name = request.Input.Name.Trim();
-        entity.Identification = request.Input.Identification.Trim();
+        var entity = _mapper.Map<Intermediary>(request.Input);
         _repository.Add(entity);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return entity.Id;

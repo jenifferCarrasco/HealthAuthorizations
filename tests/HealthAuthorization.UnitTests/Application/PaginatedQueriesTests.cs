@@ -28,8 +28,8 @@ public class PaginatedQueriesTests
         {
             Assert.Equal(1, query.PageNumber);
             Assert.Equal(20, query.PageSize);
-            Assert.Null(query.Search);
         });
+        Assert.All(queries.OfType<SearchablePaginationFilter>(), query => Assert.Null(query.Search));
     }
 
     [Theory]

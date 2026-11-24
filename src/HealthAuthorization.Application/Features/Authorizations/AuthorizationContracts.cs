@@ -1,9 +1,12 @@
+using System.Text.Json.Serialization;
+
 namespace HealthAuthorization.Application.Features.Authorizations;
 
 public class AuthorizationServiceInput
 {
     public Guid ProviderId { get; set; }
     public Guid ServiceTypeId { get; set; }
+    [JsonRequired]
     public decimal ClaimedAmount { get; set; }
     public Guid? DetailId { get; set; }
 

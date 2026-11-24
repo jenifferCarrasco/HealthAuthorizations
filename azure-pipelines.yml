@@ -1,0 +1,89 @@
+trigger: none
+pr: none
+
+parameters:
+  - name: publishImage
+    type: boolean
+    default: false
+  - name: registryServiceConnection
+    type: string
+    default: ''
+  - name: registryHost
+    type: string
+    default: ''
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageRepository: healthauthorization
+  testResults: $(Agent.TempDirectory)/healthauthorization-tests
+
+steps:
+  - task: UseDotNet@2
+    displayName: Instalar SDK .NET 10
+    inputs:
+      packageType: sdk
+      version: '10.0.x'
+
+  - bash: dotnet restore HealthAuthorization.slnx
+    displayName: Restaurar dependencias
+
+  - bash: dotnet build HealthAuthorization.slnx -c Release --no-restore
+    displayName: Compilar Release
+
+  - bash: |
+      set -euo pipefail
+      for suite in HealthAuthorization.UnitTests HealthAuthorization.IntegrationTests; do
+        dotnet test "tests/$suite/$suite.csproj" -c Release --no-build --no-restore \
+          --logger "trx;LogFileName=$suite.trx" \
+          --collect "XPlat Code Coverage" --results-directory "$(testResults)/$suite"
+      done
+    displayName: Ejecutar pruebas y Coverlet
+
+  - task: PublishTestResults@2
+    displayName: Publicar resultados de pruebas
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: VSTest
+      searchFolder: $(testResults)
+      testResultsFiles: '**/*.trx'
+      failTaskOnFailedTests: true
+
+  - task: PublishCodeCoverageResults@2
+    displayName: Publicar cobertura
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: '$(testResults)/**/coverage.cobertura.xml'
+      pathToSources: $(Build.SourcesDirectory)
+      failIfCoverageEmpty: true
+
+  - bash: docker build --target api --tag "$(imageRepository):$(Build.SourceVersion)" .
+    displayName: Construir imagen de la API
+
+  - ${{ if eq(parameters.publishImage, true) }}:
+      - bash: |
+          if [[ -z "$REGISTRY_HOST" || -z "$SERVICE_CONNECTION" ]]; then
+            echo "Indica el host del registro y el nombre de su conexión de servicio."
+            exit 1
+          fi
+        displayName: Verificar configuración de publicación
+        env:
+          REGISTRY_HOST: ${{ parameters.registryHost }}
+          SERVICE_CONNECTION: ${{ parameters.registryServiceConnection }}
+
+      - task: Docker@2
+        displayName: Autenticar en el registro
+        inputs:
+          command: login
+          containerRegistry: ${{ parameters.registryServiceConnection }}
+
+      - bash: |
+          set -euo pipefail
+          source="$(imageRepository):$(Build.SourceVersion)"
+          target="$REGISTRY_HOST/$source"
+          docker tag "$source" "$target"
+          docker push "$target"
+        displayName: Publicar imagen versionada
+        env:
+          REGISTRY_HOST: ${{ parameters.registryHost }}

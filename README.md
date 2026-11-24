@@ -1,85 +1,121 @@
 # HealthAuthorization
 
-Solución .NET 10 para desarrollar una API REST que gestione autorizaciones de servicios de salud. La etapa inicial establece la estructura y las dependencias de Clean Architecture.
+API REST para registrar, consultar, modificar e inactivar autorizaciones de servicios de salud. Cada autorización contiene servicios con montos reclamados. La API calcula la distribución 70/30, conserva el historial y protege la creación frente a reintentos duplicados.
+
+## Funcionalidades y tecnologías
+
+- Autorizaciones con uno o varios servicios, consultas paginadas por afiliado, contratante, intermediario, fechas y estado, y notificaciones SignalR al crear o cambiar el estado.
+- Seis catálogos con datos iniciales, búsqueda y eliminación lógica. Auditoría por usuario y concurrencia optimista con SQL Server.
+- .NET 10, ASP.NET Core Web API, EF Core 10, SQL Server, MediatR, FluentValidation, Mapster, JWT Bearer, OpenAPI, Swagger UI, xUnit, Coverlet y Docker Compose.
 
 | Proyecto | Responsabilidad |
-| --- | --- |
-| `src/HealthAuthorization.API` | Hospedar la API ASP.NET Core y componer sus dependencias. |
-| `src/HealthAuthorization.Application` | Alojar los casos de uso y los contratos de aplicación. |
-| `src/HealthAuthorization.Domain` | Alojar el modelo y las reglas de negocio. |
-| `src/HealthAuthorization.Infrastructure` | Alojar las implementaciones técnicas de los contratos de aplicación. |
-| `tests/HealthAuthorization.UnitTests` | Alojar pruebas unitarias del dominio y la aplicación con xUnit. |
-| `tests/HealthAuthorization.IntegrationTests` | Alojar pruebas de integración de la API con xUnit. |
+|---|---|
+| `src/HealthAuthorization.Domain` | Entidades y política de cobertura. |
+| `src/HealthAuthorization.Application` | Comandos, consultas, validación, contratos y reglas de aplicación. |
+| `src/HealthAuthorization.Infrastructure` | EF Core, SQL Server, repositorio, auditoría y migraciones. |
+| `src/HealthAuthorization.API` | HTTP, autenticación, errores, OpenAPI y SignalR. |
+| `tests/HealthAuthorization.UnitTests` | Dominio y aplicación con dobles de persistencia. |
+| `tests/HealthAuthorization.IntegrationTests` | HTTP, seguridad, EF Core y SQL Server aislado. |
 
-## Desarrollo local
+## Ejecutar con Visual Studio y SQL Server local
 
-Instala el SDK de .NET 10 y ejecuta estos comandos desde la carpeta que contiene `HealthAuthorization.slnx`.
+Necesitas Visual Studio con soporte para .NET 10 y la carga de trabajo ASP.NET, el SDK de .NET 10 y una instancia de SQL Server o SQL Server Express. Clona el repositorio y abre `HealthAuthorization.slnx`. Desde su raíz, configura la conexión de desarrollo con User Secrets. Ajusta el nombre de la instancia si usas otra.
 
-```sh
-dotnet restore
-dotnet build
-dotnet test
-dotnet run --project src/HealthAuthorization.API
-```
+~~~powershell
+dotnet tool restore
+$env:ASPNETCORE_ENVIRONMENT = 'Development'
+dotnet user-secrets set 'ConnectionStrings:HealthAuthorization' 'Server=localhost\SQLEXPRESS;Database=HealthAuthorizationDb;Integrated Security=true;Encrypt=true;TrustServerCertificate=true' --project src/HealthAuthorization.API
+dotnet ef database update --project src/HealthAuthorization.Infrastructure --startup-project src/HealthAuthorization.API --context HealthAuthorizationDbContext
+~~~
 
-La API inicia con el perfil HTTP local. En desarrollo, Swagger UI está disponible en `/swagger`.
+Selecciona `HealthAuthorization.API` como proyecto de inicio. Ejecuta el perfil HTTP en Visual Studio o usa `dotnet run --project src/HealthAuthorization.API`. Abre [Swagger](http://localhost:5044/swagger). La opción `TrustServerCertificate=true` se usa aquí para desarrollo local.
 
-## Ejecutar con Docker Desktop
+## Ejecutar con Docker Compose
 
-Usa Docker Compose v2 y contenedores Linux. La imagen de SQL Server utiliza `linux/amd64`. La configuración es para una demostración local. Solo publica la API en la interfaz de loopback del anfitrión y SQL Server queda en la red interna de Compose.
+Necesitas Docker Desktop con Compose v2 y contenedores Linux para `linux/amd64`. Las imágenes incluyen el runtime y el SDK necesarios. Copia el archivo de ejemplo y configura una contraseña propia para `MSSQL_SA_PASSWORD`.
 
-Desde la raíz de la solución, crea tu archivo local de configuración:
-
-```powershell
+~~~powershell
 Copy-Item .env.example .env
-```
-
-Edita `.env` y asigna una contraseña propia a `MSSQL_SA_PASSWORD`. Si Visual Studio ya usa el puerto 5044, cambia `API_PORT` a un puerto libre. Después ejecuta:
-
-```powershell
 docker compose config --quiet
 docker compose up --build -d
 docker compose ps -a
 docker compose logs migrate
-```
+~~~
 
-Compose espera a que SQL Server responda, ejecuta las migraciones existentes con el servicio `migrate` y arranca la API si ese servicio termina con código `0`. Las migraciones crean `HealthAuthorizationDb` en el SQL Server del contenedor y cargan los catálogos de demostración. El volumen `sql-data` conserva los datos. La instancia SQL Server Express configurada para Visual Studio sigue disponible por separado. La contraseña inicial de `sa` se establece al inicializar el volumen de SQL Server.
+SQL Server debe aparecer como `healthy` y el servicio `migrate` debe terminar con código `0`. Compose aplica las migraciones antes de iniciar la API. Publica Swagger en [http://localhost:5044/swagger](http://localhost:5044/swagger) y mantiene SQL Server en la red interna. Usa `docker compose stop` para detener el entorno conservando sus volúmenes.
 
-Abre Swagger en [http://localhost:5044/swagger](http://localhost:5044/swagger), o usa el puerto que configuraste. Para generar los tokens, usa el SDK incluido en la imagen de `migrate`. Estos comandos funcionan sin instalar .NET en el anfitrión:
+| Variable | Uso |
+|---|---|
+| `MSSQL_SA_PASSWORD` | Contraseña de inicialización de SQL Server en Compose. |
+| `API_PORT` | Puerto local de Swagger, 5044 por defecto. |
+| `ConnectionStrings__HealthAuthorization` | Alternativa a User Secrets para inyectar la conexión. Compose la configura para su SQL Server. |
+| `ASPNETCORE_ENVIRONMENT` | Usa `Development` en el entorno de demostración. |
+| `Jwt__Authority`, `Jwt__Audience`, `Jwt__RoleClaimType` | Autoridad OIDC HTTPS, audiencia y nombre opcional del claim de roles en producción. |
 
-```powershell
-docker compose run --rm --no-deps migrate user-jwts create --project src/HealthAuthorization.API --scheme DevelopmentJwt --issuer dotnet-user-jwts --audience http://localhost:5044 --name admin-local --claim "healthauthorization_user_id=11111111-1111-4111-8111-111111111111" --role Administrator --valid-for 1h --output token
-docker compose run --rm --no-deps migrate user-jwts create --project src/HealthAuthorization.API --scheme DevelopmentJwt --issuer dotnet-user-jwts --audience http://localhost:5044 --name operator-local --claim "healthauthorization_user_id=22222222-2222-4222-8222-222222222222" --role Operator --valid-for 1h --output token
-docker compose restart api
-```
+## Autenticación en Swagger
 
-Conserva la audiencia `http://localhost:5044` en esos comandos aunque cambies el puerto de acceso a Swagger. La audiencia identifica al destinatario del token y la API usa ese valor para validarlo. La clave se guarda en el volumen `jwt-secrets` y la API lo monta en modo de solo lectura. En Swagger, pulsa **Authorize**, pega el token sin el prefijo `Bearer` y prueba `GET /api/authorizations`. Para crear una autorización, envía también un GUID en `Idempotency-Key`.
+Genera ambos tokens desde la raíz. Con Visual Studio, usa los comandos siguientes. En Docker, sustituye el prefijo `dotnet` de cada comando por `docker compose run --rm --no-deps migrate` y después ejecuta `docker compose restart api`. Mantén la audiencia 5044 aunque cambies el puerto de acceso en Compose.
 
-Para detener el entorno y conservar la base y la clave local, ejecuta `docker compose down`. La configuración de Compose utiliza `Development`. Un despliegue de producción debe utilizar la configuración del proveedor externo descrita más abajo.
-
-## Autenticación para pruebas locales
-
-Desde la raíz de la solución, genera un token para cada rol. Los GUID de ejemplo identifican de forma estable a cada usuario de prueba.
-
-```powershell
+~~~powershell
 dotnet user-jwts create --project src/HealthAuthorization.API --scheme DevelopmentJwt --issuer dotnet-user-jwts --audience http://localhost:5044 --name admin-local --claim "healthauthorization_user_id=11111111-1111-4111-8111-111111111111" --role Administrator --valid-for 1h --output token
 dotnet user-jwts create --project src/HealthAuthorization.API --scheme DevelopmentJwt --issuer dotnet-user-jwts --audience http://localhost:5044 --name operator-local --claim "healthauthorization_user_id=22222222-2222-4222-8222-222222222222" --role Operator --valid-for 1h --output token
-```
+~~~
 
-En Swagger, abre **Authorize** y pega el token sin el prefijo `Bearer`. Con un token de `Operator` puedes consultar los catálogos y consultar, crear y actualizar autorizaciones. Las escrituras de catálogos y los cambios de estado de autorizaciones requieren `Administrator`. Un token ausente o inválido devuelve `401` y un usuario autenticado sin permiso recibe `403`.
+En Swagger, pulsa **Authorize** y pega el token. Si la API local ya se estaba ejecutando, reiníciala para cargar la clave. Los tokens de desarrollo se validan solo en `Development`. En producción, el proveedor OIDC externo debe emitir exactamente un claim personalizado `healthauthorization_user_id` con un GUID válido, estable y distinto de cero.
 
-`dotnet user-jwts` guarda la clave local en User Secrets. Los tokens y las claves deben permanecer fuera del repositorio. El esquema `DevelopmentJwt` solo se registra en `Development`.
+| Operación | Administrator | Operator |
+|---|:---:|:---:|
+| Consultar catálogos y autorizaciones | Sí | Sí |
+| Crear y actualizar autorizaciones | Sí | Sí |
+| Escribir catálogos y cambiar estado de autorizaciones | Sí | |
+| Conectarse al Hub | Sí | Sí |
 
-## Proveedor de identidad externo
+## Crear una autorización de ejemplo
 
-En producción, configura `Jwt__Authority` con la autoridad OIDC sobre HTTPS y `Jwt__Audience` con la audiencia de los tokens de acceso de esta API. El claim de roles predeterminado es `roles`. Si el emisor usa otro nombre, configura `Jwt__RoleClaimType`. El proveedor debe emitir los valores de rol `Administrator` y `Operator` en el claim configurado.
+La migración inicial carga 16 registros activos: un afiliado `DEMO-001`, un contratante, un intermediario, cuatro prestadores, cuatro tipos de prestador y cinco tipos de servicio. Las autorizaciones y los detalles se crean por la API. Los catálogos se consultan en sus endpoints.
 
-`healthauthorization_user_id` es un claim **personalizado**. El proveedor externo debe incluir exactamente un valor que sea un GUID estable, distinto de cero y único entre las identidades admitidas. La API usa ese valor para auditoría e idempotencia. Las claves de idempotencia históricas del alcance anónimo se conservan. Las solicitudes autenticadas usan el alcance de su propio usuario.
+Envía `POST /api/authorizations` con tu token y el encabezado `Idempotency-Key`. Para crear una nueva operación usa un GUID, por ejemplo con `[guid]::NewGuid()`.
 
-## Notificaciones de autorizaciones
+~~~json
+{
+  "affiliateId": "000000cb-0000-0000-0000-000000000000",
+  "contractorId": "000000c9-0000-0000-0000-000000000000",
+  "intermediaryId": "000000ca-0000-0000-0000-000000000000",
+  "services": [
+    {
+      "providerId": "00000065-0000-0000-0000-000000000000",
+      "serviceTypeId": "0000000b-0000-0000-0000-000000000000",
+      "claimedAmount": 100
+    }
+  ]
+}
+~~~
 
-Los clientes SignalR pueden conectarse a `/hubs/authorizations` y suscribirse a `AuthorizationCreated` y `AuthorizationStatusChanged` antes de iniciar la conexión. Los eventos incluyen el identificador de la autorización y la fecha UTC. El evento de cambio de estado incluye también `isActive`.
+La respuesta `201 Created` incluye el ID y la cabecera `Location`. Sigue esa ruta para comprobar 100 reclamados, 70 de la ARS y 30 del afiliado. Reenviar la misma solicitud, clave y usuario devuelve el ID original. Cambiar el contenido con la misma clave devuelve `409`.
 
-El Hub admite conexiones autenticadas con rol `Administrator` u `Operator` y las cierra al expirar su token. Los clientes pueden pasar el token mediante `accessTokenFactory` en JavaScript o `AccessTokenProvider` en .NET. El servidor admite `access_token` en la query string solo para los transportes WebSocket y Server-Sent Events de la ruta del Hub. Usa HTTPS en producción y evita registrar ese parámetro en proxies o infraestructura.
+## Pruebas y resultados
 
-Las notificaciones se emiten después de guardar el cambio por REST y se difunden a todos los clientes admitidos por el Hub. Un fallo del envío se registra y la respuesta REST conserva el resultado del guardado. Los clientes desconectados no reciben los eventos anteriores al reconectarse. La implementación no persiste ni reintenta las notificaciones.
+~~~powershell
+dotnet build HealthAuthorization.slnx -c Release
+dotnet test HealthAuthorization.slnx -c Release --no-build
+~~~
+
+Las pruebas SQL Server se habilitan con el script siguiente. Requiere PowerShell 7, el SDK y Docker Desktop. Usa un contenedor distinto y una base exclusiva de pruebas.
+
+~~~powershell
+dotnet tool restore
+$stamp = Get-Date -Format yyyyMMddHHmmss
+$coverage = "artifacts/coverage/delivery-$stamp"
+.\tests\Run-SqlServerTests.ps1 -CoverageDirectory $coverage
+.\tests\Measure-Coverage.ps1 $coverage
+~~~
+
+La validación completa obtuvo 122 pruebas aprobadas y superó el 80 % de cobertura de líneas. La duplicación de producción sin migraciones quedó en 1,39 %, por debajo del objetivo del 3 %. La cobertura final de líneas fue 90,98 % sin migraciones y 95,04 % incluyéndolas. La cobertura de ramas fue 67,34 %. La medición con 30.000 autorizaciones sintéticas registró 320 respuestas exitosas y un P95 de 1.125,22 ms en la página 1500. Consulta el alcance, el método de medición y las limitaciones en el informe de validación.
+
+## Documentación
+
+- [Arquitectura, modelo y decisiones](docs/arquitectura.md)
+- [Contratos y reglas de negocio](docs/api.md)
+- [Matriz de cumplimiento y validación](docs/validacion.md)
+- [Guía manual de Swagger](tests/Etapa11E-Swagger.md)
+- [Pipeline de Azure DevOps](azure-pipelines.yml) y [plantilla declarativa de despliegue](gitops/README.md)

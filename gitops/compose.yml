@@ -1,0 +1,12 @@
+services:
+  api:
+    image: ${API_IMAGE:?Configura la imagen versionada en release.env}
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__HealthAuthorization: ${ConnectionStrings__HealthAuthorization:?Inyecta la cadena SQL externamente}
+      Jwt__Authority: ${Jwt__Authority:?Configura la autoridad OIDC HTTPS}
+      Jwt__Audience: ${Jwt__Audience:?Configura la audiencia}
+      Jwt__RoleClaimType: ${Jwt__RoleClaimType:-roles}
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"

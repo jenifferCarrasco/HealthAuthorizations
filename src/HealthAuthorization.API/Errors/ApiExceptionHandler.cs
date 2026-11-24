@@ -17,6 +17,9 @@ public class ApiExceptionHandler : IExceptionHandler
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(httpContext);
+        ArgumentNullException.ThrowIfNull(exception);
+
         var result = CreateResult(exception, httpContext.TraceIdentifier);
         await result.ExecuteAsync(httpContext);
         return true;

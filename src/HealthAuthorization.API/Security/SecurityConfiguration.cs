@@ -17,6 +17,8 @@ public static class SecurityConfiguration
 
     public static void AddApiSecurity(this WebApplicationBuilder builder)
     {
+        ArgumentNullException.ThrowIfNull(builder);
+
         var development = builder.Environment.IsDevelopment();
         var scheme = development ? DevelopmentScheme : ProductionScheme;
         var jwt = builder.Configuration.GetSection("Jwt");

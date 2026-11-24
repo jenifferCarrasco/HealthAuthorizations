@@ -26,3 +26,4 @@ credentials.json
 *.pfx
 *.binlog
 *.trx
+/AGENTS.md

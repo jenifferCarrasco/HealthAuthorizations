@@ -19,6 +19,8 @@ public class IdempotencyKeyFilter : ActionFilterAttribute
 
     public override void OnActionExecuting(ActionExecutingContext context)
     {
+        ArgumentNullException.ThrowIfNull(context);
+
         var values = context.HttpContext.Request.Headers[HeaderName];
         if (values.Count == 1 && Guid.TryParse(values[0], out var key) && key != Guid.Empty)
         {

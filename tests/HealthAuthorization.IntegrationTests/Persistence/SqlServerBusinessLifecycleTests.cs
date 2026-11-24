@@ -110,26 +110,16 @@ public class SqlServerBusinessLifecycleTests
         var originalVersion = await ReadVersionAsync<Authorization>(app, original.Id);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-        var losing = firstClient.PutAsJsonAsync(location, new AuthorizationInput(affiliateId,
-            [new AuthorizationServiceInput(ProviderId, ServiceId, 1m, retained.Id),
-             new AuthorizationServiceInput(ProviderId, ServiceId, 99m)]), timeout.Token);
-        try
-        {
-            await pause.Entered.Task.WaitAsync(timeout.Token);
-            using var winner = inactivate
+        var rejected = await CompleteRaceAsync(pause, timeout.Token,
+            async () => await firstClient.PutAsJsonAsync(location, new AuthorizationInput(affiliateId,
+                [new AuthorizationServiceInput(ProviderId, ServiceId, 1m, retained.Id),
+                 new AuthorizationServiceInput(ProviderId, ServiceId, 99m)]), timeout.Token),
+            async () => inactivate
                 ? await winnerClient.PatchAsJsonAsync(location.AbsoluteUri + "/status", new { isActive = false }, timeout.Token)
                 : await winnerClient.PutAsJsonAsync(location, new AuthorizationInput(affiliateId,
-                    [new AuthorizationServiceInput(ProviderId, ServiceId, 200m, retained.Id)]), timeout.Token);
-            Assert.Equal(HttpStatusCode.NoContent, winner.StatusCode);
-        }
-        finally
-        {
-            pause.Release.TrySetResult();
-        }
-
-        using var rejected = await losing;
-        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
-        Assert.Contains("Vuelva a consultarlo", await rejected.Content.ReadAsStringAsync());
+                    [new AuthorizationServiceInput(ProviderId, ServiceId, 200m, retained.Id)]), timeout.Token));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.Status);
+        Assert.Contains("Vuelva a consultarlo", rejected.Body);
         var final = Assert.Single(await ReadAuthorizationsAsync(app, key));
         Assert.Equal(creator, final.CreatedBy);
         Assert.Equal(winnerUser, final.LastUpdatedBy);
@@ -181,21 +171,12 @@ public class SqlServerBusinessLifecycleTests
         var oldVersion = await ReadVersionAsync<Affiliate>(app, id);
 
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-        var losing = firstClient.PutAsJsonAsync(path, new AffiliateInput(original.AffiliateNumber,
-            "Perdedor", "No persistir", original.BirthDate), timeout.Token);
-        try
-        {
-            await pause.Entered.Task.WaitAsync(timeout.Token);
-            using var winner = await winnerClient.PutAsJsonAsync(path, new AffiliateInput(original.AffiliateNumber,
-                "Ganador", original.LastName, original.BirthDate), timeout.Token);
-            Assert.Equal(HttpStatusCode.NoContent, winner.StatusCode);
-        }
-        finally
-        {
-            pause.Release.TrySetResult();
-        }
-        using var rejected = await losing;
-        Assert.Equal(HttpStatusCode.Conflict, rejected.StatusCode);
+        var rejected = await CompleteRaceAsync(pause, timeout.Token,
+            async () => await firstClient.PutAsJsonAsync(path, new AffiliateInput(original.AffiliateNumber,
+                "Perdedor", "No persistir", original.BirthDate), timeout.Token),
+            async () => await winnerClient.PutAsJsonAsync(path, new AffiliateInput(original.AffiliateNumber,
+                "Ganador", original.LastName, original.BirthDate), timeout.Token));
+        Assert.Equal(HttpStatusCode.Conflict, rejected.Status);
 
         await using var scope = app.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<HealthAuthorizationDbContext>();
@@ -385,6 +366,35 @@ public class SqlServerBusinessLifecycleTests
             }
         }
         return frames.Dequeue();
+    }
+
+    private static async Task<(HttpStatusCode Status, string Body)> CompleteRaceAsync(
+        PausedWrite pause, CancellationToken cancellationToken,
+        Func<Task<HttpResponseMessage>> sendPaused, Func<Task<HttpResponseMessage>> sendWinner)
+    {
+        var paused = ReadPausedResponseAsync();
+        await Task.WhenAll(paused, RunWinnerAsync());
+        return await paused;
+
+        async Task<(HttpStatusCode Status, string Body)> ReadPausedResponseAsync()
+        {
+            using var response = await sendPaused();
+            return (response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken));
+        }
+
+        async Task RunWinnerAsync()
+        {
+            try
+            {
+                await pause.Entered.Task.WaitAsync(cancellationToken);
+                using var response = await sendWinner();
+                Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            }
+            finally
+            {
+                pause.Release.TrySetResult();
+            }
+        }
     }
 
     private static async Task<WebApplication> StartAsync(

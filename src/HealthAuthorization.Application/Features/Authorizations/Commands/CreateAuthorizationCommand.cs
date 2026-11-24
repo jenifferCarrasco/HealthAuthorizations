@@ -1,0 +1,86 @@
+using HealthAuthorization.Application.Abstractions;
+using HealthAuthorization.Application.Features.Authorizations.Notifications;
+using HealthAuthorization.Domain.Entities;
+using MediatR;
+using Microsoft.Extensions.Logging;
+
+namespace HealthAuthorization.Application.Features.Authorizations.Commands;
+
+public class CreateAuthorizationCommand : IRequest<Guid>
+{
+    public AuthorizationInput Input { get; set; }
+    public Guid IdempotencyKey { get; set; }
+
+    public CreateAuthorizationCommand(AuthorizationInput input, Guid idempotencyKey)
+    {
+        Input = input;
+        IdempotencyKey = idempotencyKey;
+    }
+}
+
+public class CreateAuthorizationCommandHandler : IRequestHandler<CreateAuthorizationCommand, Guid>
+{
+    private readonly IRepositoryAsync<Authorization> _authorizations;
+    private readonly AuthorizationWriter _writer;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IAuthorizationNotificationService _notifications;
+    private readonly AuthorizationIdempotencyService _idempotency;
+    private readonly TimeProvider _clock;
+    private readonly ILogger<CreateAuthorizationCommandHandler> _logger;
+
+    public CreateAuthorizationCommandHandler(IRepositoryAsync<Authorization> authorizations, AuthorizationWriter writer,
+        IUnitOfWork unitOfWork, IAuthorizationNotificationService notifications, TimeProvider clock,
+        ILogger<CreateAuthorizationCommandHandler> logger, AuthorizationIdempotencyService idempotency)
+    {
+        _authorizations = authorizations;
+        _writer = writer;
+        _unitOfWork = unitOfWork;
+        _notifications = notifications;
+        _clock = clock;
+        _logger = logger;
+        _idempotency = idempotency;
+    }
+
+    public async Task<Guid> Handle(CreateAuthorizationCommand request, CancellationToken cancellationToken)
+    {
+        var authorization = _idempotency.Prepare(request.Input, request.IdempotencyKey);
+        if (await _idempotency.FindReplayAsync(authorization, cancellationToken) is Guid existingId)
+        {
+            return existingId;
+        }
+
+        await _writer.ApplyAsync(authorization, request.Input, cancellationToken);
+        _authorizations.Add(authorization);
+        try
+        {
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (AuthorizationIdempotencyConflictException)
+        {
+            if (await _idempotency.FindReplayAsync(authorization, cancellationToken) is Guid winnerId)
+            {
+                return winnerId;
+            }
+
+            throw;
+        }
+
+        try
+        {
+            var notification = new AuthorizationCreatedNotification
+            {
+                AuthorizationId = authorization.Id,
+                OccurredAt = _clock.GetUtcNow()
+            };
+            await _notifications.NotifyCreatedAsync(notification, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(exception, "No se pudo notificar la creación de la autorización {AuthorizationId}.",
+                authorization.Id);
+        }
+
+        return authorization.Id;
+    }
+
+}

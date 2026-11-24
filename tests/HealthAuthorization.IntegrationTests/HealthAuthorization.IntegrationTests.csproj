@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="../HealthAuthorization.UnitTests/Application/PersistenceStubs.cs" Link="Support/PersistenceStubs.cs" />
   </ItemGroup>
 
   <ItemGroup>

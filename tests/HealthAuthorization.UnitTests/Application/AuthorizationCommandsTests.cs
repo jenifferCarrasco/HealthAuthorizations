@@ -297,6 +297,51 @@ public sealed class AuthorizationCommandsTests
         Assert.Empty(_notifications.Created);
     }
 
+    [Theory]
+    [InlineData("affiliate", "afiliado")]
+    [InlineData("contractor", "contratante")]
+    [InlineData("intermediary", "intermediario")]
+    [InlineData("service", "tipos de servicio")]
+    public async Task MissingParticipantOrServicePreventsInsertAndNotification(string reference, string expectedMessage)
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var handler = CreateHandler(repository);
+        var missing = Guid.NewGuid();
+        var input = reference switch
+        {
+            "affiliate" => new AuthorizationInput(missing, [Service(100m)]),
+            "contractor" => new AuthorizationInput(_affiliate.Id, [Service(100m)], ContractorId: missing),
+            "intermediary" => new AuthorizationInput(_affiliate.Id, [Service(100m)], IntermediaryId: missing),
+            _ => Input(new AuthorizationServiceInput(_provider.Id, missing, 100m))
+        };
+
+        var failure = await Assert.ThrowsAsync<NotFoundException>(() =>
+            handler.Handle(new CreateAuthorizationCommand(input, Guid.NewGuid()), CancellationToken.None));
+
+        Assert.Contains(expectedMessage, failure.Message);
+        Assert.Empty(repository.Items);
+        Assert.Equal(0, _unit.SaveCount);
+        Assert.Empty(_notifications.Created);
+    }
+
+    [Fact]
+    public async Task ValidIndividualAmountsCannotExceedTheAggregateLimit()
+    {
+        var repository = new MemoryRepository<Authorization>();
+        var handler = CreateHandler(repository);
+        var input = Input(Service(InputLimits.MaxClaimedAmount), Service(0.01m));
+        var command = new CreateAuthorizationCommand(input, Guid.NewGuid());
+        Assert.True(new CreateAuthorizationCommandValidator().Validate(command).IsValid);
+
+        var failure = await Assert.ThrowsAsync<ValidationException>(() =>
+            handler.Handle(command, CancellationToken.None));
+
+        Assert.Contains("monto total", failure.Message);
+        Assert.Empty(repository.Items);
+        Assert.Equal(0, _unit.SaveCount);
+        Assert.Empty(_notifications.Created);
+    }
+
     private AuthorizationInput Input(params AuthorizationServiceInput[] services) => new(_affiliate.Id, services);
     private AuthorizationServiceInput Service(decimal amount, Guid? detailId = null) =>
         new(_provider.Id, _serviceType.Id, amount, detailId);

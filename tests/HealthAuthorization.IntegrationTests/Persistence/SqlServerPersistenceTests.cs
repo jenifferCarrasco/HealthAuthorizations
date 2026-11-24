@@ -1,6 +1,7 @@
 using FluentValidation;
 using HealthAuthorization.Application;
 using HealthAuthorization.Application.Abstractions;
+using HealthAuthorization.Application.Common;
 using HealthAuthorization.Application.Features.Affiliates;
 using HealthAuthorization.Application.Features.Affiliates.Commands;
 using HealthAuthorization.Application.Features.Authorizations;
@@ -11,7 +12,9 @@ using HealthAuthorization.Infrastructure.Persistence;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HealthAuthorization.IntegrationTests.Persistence;
@@ -39,6 +42,31 @@ public sealed class SqlServerPersistenceTests
         Assert.Contains("DEMO-001", sql);
         Assert.DoesNotContain("ON DELETE CASCADE", sql);
         Assert.Equal(8, context.Model.GetEntityTypes().Count());
+    }
+
+    [Fact]
+    public void PublishedMigrationsCanUpgradeAnExistingDatabaseWithoutRecreatingCatalogs()
+    {
+        using var context = CreateContext();
+        var migrator = context.GetService<IMigrator>();
+        const string initial = "20261123174056_InitialCreate";
+        const string idempotency = "20261124004932_AddAuthorizationIdempotency";
+
+        var freshInstall = migrator.GenerateScript(options: MigrationsSqlGenerationOptions.Idempotent);
+        var upgrade = migrator.GenerateScript(initial, idempotency, MigrationsSqlGenerationOptions.Idempotent);
+        var downgrade = migrator.GenerateScript(idempotency, initial);
+
+        Assert.Contains("CREATE TABLE [Authorizations]", freshInstall);
+        Assert.Contains("DEMO-001", freshInstall);
+        Assert.Contains("[__EFMigrationsHistory]", upgrade);
+        Assert.Contains("ALTER TABLE [Authorizations] ADD [IdempotencyRequestHash] binary(32) NULL", upgrade);
+        Assert.Contains("CREATE UNIQUE INDEX [UX_Authorizations_IdempotencyScope_Key]", upgrade);
+        Assert.DoesNotContain("CREATE TABLE", upgrade);
+        Assert.DoesNotContain("DROP TABLE", upgrade);
+        Assert.DoesNotContain("DEMO-001", upgrade);
+        Assert.Contains("DROP INDEX [UX_Authorizations_IdempotencyScope_Key] ON [Authorizations]", downgrade);
+        Assert.DoesNotContain("DROP TABLE", downgrade);
+        Assert.False(context.Database.HasPendingModelChanges());
     }
 
     [Fact]
@@ -141,6 +169,31 @@ public sealed class SqlServerPersistenceTests
     }
 
     [Fact]
+    public async Task UnitOfWorkTranslatesConcurrencyExceptionWithoutRetryingTheWrite()
+    {
+        var failure = new DbUpdateConcurrencyException("No se actualizó ninguna fila.");
+        var interceptor = new RejectConcurrentWrite(failure);
+        var services = new ServiceCollection();
+        services.AddInfrastructure(ConnectionString);
+        services.ConfigureDbContext<HealthAuthorizationDbContext>(options => options.AddInterceptors(interceptor));
+        await using var provider = services.BuildServiceProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<HealthAuthorizationDbContext>();
+        var repository = scope.ServiceProvider.GetRequiredService<IRepositoryAsync<Affiliate>>();
+        var unit = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+        var affiliate = new Affiliate { AffiliateNumber = "CONC-1", FirstName = "Ana" };
+        context.Attach(affiliate);
+        affiliate.FirstName = "María";
+        repository.Update(affiliate);
+
+        var conflict = await Assert.ThrowsAsync<ConflictException>(() => unit.SaveChangesAsync());
+
+        Assert.Same(failure, conflict.InnerException);
+        Assert.Contains("Vuelva a consultarlo", conflict.Message);
+        Assert.Equal(1, interceptor.Attempts);
+    }
+
+    [Fact]
     public async Task MediatorRejectsInvalidCommandsBeforeAccessingSqlServer()
     {
         var services = new ServiceCollection();
@@ -199,5 +252,24 @@ public sealed class SqlServerPersistenceTests
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default) =>
             ValueTask.FromResult(InterceptionResult<int>.SuppressWithResult(1));
+    }
+
+    private class RejectConcurrentWrite : SaveChangesInterceptor
+    {
+        private readonly DbUpdateConcurrencyException _failure;
+
+        public RejectConcurrentWrite(DbUpdateConcurrencyException failure)
+        {
+            _failure = failure;
+        }
+
+        public int Attempts { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            return ValueTask.FromException<InterceptionResult<int>>(_failure);
+        }
     }
 }
